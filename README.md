@@ -5,7 +5,10 @@ Product search and personalised recommendations with FastAPI, React and reproduc
 - **Search:** BM25, MiniLM semantic retrieval, RRF fusion, query understanding and LambdaMART reranking over WANDS.
 - **Recommendations:** Popularity, sparse ItemCF, history-based Two-Tower and candidate allocation over Amazon Baby Products ratings.
 - **Traffic Lab:** cold-start slices and finite-arm policy simulation over explicit rating-target proxy rewards.
+- **Local LLM:** evidence-bound query rewriting and relevance-label diagnostics with cached CPU inference.
 - **Evaluation:** fixed held-out splits, algorithm comparisons, latency measurements and versioned reports.
+
+See the [local LLM workflow](docs/local_llm.md) for its bounded offline protocol.
 
 ## Run locally
 
@@ -305,6 +308,7 @@ slices and the seeded offline policy comparison.
 
 - [WANDS](https://github.com/wayfair/WANDS), MIT licence. Chen et al., *WANDS: Dataset for Product Search Relevance Assessment*, ECIR 2022.
 - [MiniLM model card](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), Apache-2.0. The fixed revision is recorded in `configs/dense.json`.
+- [Qwen2.5-0.5B-Instruct model card](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct), Apache-2.0. The local diagnostic revision is recorded in `configs/llm.json`.
 - [LightGBM Ranker](https://lightgbm.readthedocs.io/en/stable/pythonapi/lightgbm.LGBMRanker.html), used for LambdaMART fitting and native model persistence.
 - [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/) and its [5-core rating-only files](https://amazon-reviews-2023.github.io/data_processing/5core.html). Hou et al., *Bridging Language and Items for Retrieval and Recommendation*, 2024. Dataset use and redistribution follow the source terms.
 

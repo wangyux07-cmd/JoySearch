@@ -2,6 +2,11 @@
 
 JoySearch is a modular monolith. The README describes product behaviour; evaluation.md defines the offline protocol. This document describes module boundaries and semantic search.
 
+Local LLM experiments keep generation and raw-response caching in `search/local_model.py`,
+prompts and deterministic evidence guards in `search/llm.py`, and cohort selection,
+metrics and reports in `evaluation/llm_eval.py`. The offline CLI uses existing
+retrievers; HTTP handlers and model training remain separate. See [the protocol](local_llm.md).
+
 ## Responsibilities
 
 | Module | Owns | Stable boundaries |

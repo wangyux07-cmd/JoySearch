@@ -46,6 +46,11 @@ Ratings are preference proxies. This per-user leave-last-two-out protocol is dis
 
 ## Runtime and provenance
 
+The optional [local LLM diagnostic](local_llm.md) uses a separate seeded 24-query
+cohort, grade-stratified label pairs, raw-response cache and validation signature
+gate. Its cold-inclusive generation costs and refusal-aware scores are separate
+from the warmed full-cohort application benchmark below.
+
 Load the model before measurement, warm up five requests, then time sequential inference over the complete evaluation cohort. Report p50/p95 milliseconds and sample count; exclude loading, building and HTTP overhead. Report build time separately.
 
 Every local run stores configuration, source and artifact hashes, actual split/sample counts, code hashes, available Git SHA, package versions, CPU details, per-request quality diagnostics and algorithm comparisons. Comparisons report absolute differences and relative changes only for nonzero baselines. Repeated use of a test set is labelled in configuration.
