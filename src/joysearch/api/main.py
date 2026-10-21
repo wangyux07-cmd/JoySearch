@@ -1,0 +1,145 @@
+from contextlib import asynccontextmanager
+from pathlib import Path
+from time import perf_counter
+from uuid import uuid4
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+
+from joysearch.api.schemas import RecRequest, SearchRequest
+from joysearch.common import ROOT, RecommendationContext, read_json
+from joysearch.recommendation.pipeline import RecPipeline
+from joysearch.search.bm25 import BM25Index
+from joysearch.search.pipeline import SearchPipeline
+
+
+def create_app(root: Path = ROOT):
+    @asynccontextmanager
+    async def lifespan(app):
+        search_path = root / "artifacts/search"
+        app.state.search = (
+            SearchPipeline(BM25Index.load(search_path)) if search_path.exists() else None
+        )
+        rec_path = root / "artifacts/recommendation"
+        app.state.rec = RecPipeline.load(rec_path) if rec_path.exists() else None
+        yield
+
+    app = FastAPI(title="JoySearch", lifespan=lifespan)
+
+    @app.get("/healthz")
+    def health():
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    def ready():
+        states = {
+            "search_ready": app.state.search is not None,
+            "rec_ready": app.state.rec is not None,
+        }
+        return JSONResponse(
+            {
+                **states,
+                "versions": {
+                    "search": app.state.search.version if app.state.search else None,
+                    "rec": app.state.rec.version if app.state.rec else None,
+                },
+                "reason": None if all(states.values()) else "Build missing model artifacts",
+            },
+            status_code=200 if all(states.values()) else 503,
+        )
+
+    @app.post("/api/v1/search")
+    def search(request: SearchRequest):
+        pipeline = app.state.search
+        if pipeline is None:
+            raise HTTPException(503, "Search index missing; run scripts/build_search.py")
+        started = perf_counter()
+        candidates = pipeline.search(request.query, request.top_k)
+        results = []
+        for c in candidates:
+            metadata = pipeline.metadata[c.item_id]
+            results.append(
+                {
+                    "catalog_id": c.catalog_id,
+                    "item_id": c.item_id,
+                    "title": metadata["product_name"],
+                    "score": c.score,
+                    "rank": c.rank,
+                    "sources": [c.source],
+                    "metadata": {"product_class": metadata["product_class"]},
+                }
+            )
+        return {
+            "catalog_id": request.catalog_id,
+            "algorithm": request.algorithm,
+            "model_version": pipeline.version,
+            "results": results,
+            "degraded": False,
+            "trace_id": uuid4().hex,
+            "latency_ms": (perf_counter() - started) * 1000,
+        }
+
+    @app.get("/api/v1/users/demo")
+    def demo_users():
+        if app.state.rec is None:
+            raise HTTPException(503, "Recommendation model missing; run scripts/build_rec.py")
+        return {
+            "catalog_id": "amazon_baby_rec",
+            "users": [
+                {"user_id": alias, "history_count": len(app.state.rec.popularity.histories[user])}
+                for alias, user in list(app.state.rec.aliases.items())[:20]
+            ],
+        }
+
+    @app.post("/api/v1/recommend")
+    def recommend(request: RecRequest):
+        pipeline = app.state.rec
+        if pipeline is None:
+            raise HTTPException(503, "Recommendation model missing; run scripts/build_rec.py")
+        started = perf_counter()
+        user = pipeline.aliases.get(request.user_id)
+        candidates, reason = pipeline.recommend(
+            RecommendationContext(user, exclude_seen=request.exclude_seen),
+            request.top_k,
+            request.algorithm,
+        )
+        return {
+            "catalog_id": request.catalog_id,
+            "algorithm": request.algorithm,
+            "model_version": pipeline.version,
+            "results": [
+                {
+                    "catalog_id": c.catalog_id,
+                    "item_id": c.item_id,
+                    "title": None,
+                    "rank": c.rank,
+                    "score": c.score,
+                    "sources": [c.source],
+                    "metadata": {"availability": "metadata unavailable"},
+                }
+                for c in candidates
+            ],
+            "degraded": reason is not None,
+            "fallback_reason": reason,
+            "trace_id": uuid4().hex,
+            "latency_ms": (perf_counter() - started) * 1000,
+        }
+
+    @app.get("/api/v1/reports/summary")
+    def reports():
+        latest = root / "reports/latest.json"
+        if not latest.exists():
+            return {"status": "not_run", "reason": "Run scripts/evaluate.py first"}
+        pointer = read_json(latest)
+        folder = root / "reports" / pointer["run_id"]
+        return {
+            "status": "completed",
+            "run_id": pointer["run_id"],
+            "search": read_json(folder / "search_metrics.json"),
+            "recommendation": read_json(folder / "recommendation_metrics.json"),
+        }
+
+    return app
+
+
+app = create_app()

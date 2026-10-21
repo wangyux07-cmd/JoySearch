@@ -1,0 +1,58 @@
+import json
+import subprocess
+import sys
+import time
+from datetime import UTC, datetime
+
+from joysearch.common import ROOT, read_json, write_json
+
+if __name__ == "__main__":
+    folder = ROOT / "reports/quality" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    folder.mkdir(parents=True)
+    commands = [
+        ([sys.executable, "-m", "pytest", "-q"], ROOT, "pytest"),
+        ([sys.executable, "-m", "ruff", "check", "."], ROOT, "ruff"),
+        (["npm.cmd", "run", "build"], ROOT / "frontend", "frontend_build"),
+        ([sys.executable, "scripts/evaluate.py", "--pipeline", "all"], ROOT, "real_evaluations"),
+        ([sys.executable, "scripts/smoke.py"], ROOT, "api_smoke"),
+        (
+            [sys.executable, "scripts/smoke.py", "--base-url", "http://127.0.0.1:8000"],
+            ROOT,
+            "http_smoke",
+        ),
+    ]
+    results = []
+    for command, cwd, name in commands:
+        started = time.perf_counter()
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        (folder / f"{name}.txt").write_text(result.stdout + result.stderr, encoding="utf-8")
+        row = {
+            "check": name,
+            "command": subprocess.list2cmdline(command),
+            "cwd": str(cwd),
+            "exit_code": result.returncode,
+            "duration_seconds": time.perf_counter() - started,
+            "output": str((folder / f"{name}.txt").relative_to(ROOT)),
+        }
+        results.append(row)
+        print(json.dumps(row), flush=True)
+    write_json(
+        folder / "results.json",
+        {"checks": results, "latest_metrics": read_json(ROOT / "reports/latest.json")},
+    )
+    write_json(
+        ROOT / "reports/quality/latest.json",
+        {
+            "folder": str(folder.relative_to(ROOT)),
+            "pass": all(r["exit_code"] == 0 for r in results),
+        },
+    )
+    raise SystemExit(0 if all(r["exit_code"] == 0 for r in results) else 1)
