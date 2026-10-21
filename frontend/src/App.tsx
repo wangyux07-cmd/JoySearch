@@ -32,6 +32,7 @@ type Report = {
     sample_count: number;
     catalog_size: number;
     metrics: Record<string, number>;
+    algorithms?: Record<string, { metrics: Record<string, number> }>;
   };
   recommendation?: {
     users_evaluated: number;
@@ -86,6 +87,9 @@ export default function App() {
   const [users, setUsers] = useState<User[]>([]);
   const [user, setUser] = useState("");
   const [algorithm, setAlgorithm] = useState("itemcf");
+  const [searchAlgorithm, setSearchAlgorithm] = useState("bm25");
+  const [searchAlgorithms, setSearchAlgorithms] = useState<string[]>([]);
+  const [capabilityError, setCapabilityError] = useState("");
   const [ranking, setRanking] = useState<Ranking | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -108,6 +112,23 @@ export default function App() {
       .catch((cause: Error) => {
         if (cause.name !== "AbortError") setReportError(cause.message);
       });
+    fetch("/readyz", { signal: controller.signal })
+      .then(async (response) => {
+        if (![200, 503].includes(response.status))
+          throw new Error(`HTTP ${response.status}`);
+        const data: { search_algorithms?: unknown } = await response.json();
+        const algorithms = data.search_algorithms;
+        if (
+          !Array.isArray(algorithms) ||
+          !algorithms.every((a) => ["bm25", "dense", "hybrid"].includes(a))
+        ) {
+          throw new Error("后端搜索能力合同不匹配，请重启当前版本 API。");
+        }
+        setSearchAlgorithms(algorithms);
+      })
+      .catch((cause: Error) => {
+        if (cause.name !== "AbortError") setCapabilityError(cause.message);
+      });
     return () => controller.abort();
   }, []);
 
@@ -129,7 +150,7 @@ export default function App() {
               catalog_id: "wands_search",
               query,
               top_k: 10,
-              algorithm: "bm25",
+              algorithm: searchAlgorithm,
             })
           : await api<Ranking>("/api/v1/recommend", {
               catalog_id: "amazon_baby_rec",
@@ -216,9 +237,34 @@ export default function App() {
                         required
                       />
                       <label htmlFor="search-algorithm">检索算法</label>
-                      <select id="search-algorithm" disabled>
-                        <option>BM25</option>
+                      <select
+                        id="search-algorithm"
+                        disabled={busy}
+                        value={searchAlgorithm}
+                        onChange={(e) => setSearchAlgorithm(e.target.value)}
+                      >
+                        {[
+                          ["bm25", "BM25 · 关键词"],
+                          ["dense", "Dense · 语义检索"],
+                          ["hybrid", "Hybrid · RRF 融合"],
+                        ].map(([value, label]) => (
+                          <option
+                            key={value}
+                            value={value}
+                            disabled={!searchAlgorithms.includes(value)}
+                          >
+                            {label}
+                            {searchAlgorithms.includes(value)
+                              ? ""
+                              : " · 未就绪"}
+                          </option>
+                        ))}
                       </select>
+                      {capabilityError && (
+                        <p className="error" role="alert">
+                          {capabilityError}
+                        </p>
+                      )}
                       <p className="helper">
                         英文查询与原始商品文本匹配。可尝试 wooden desk、sofa 或
                         salon chair。
@@ -264,7 +310,12 @@ export default function App() {
                   )}
                   <button
                     className="primary"
-                    disabled={busy || (tab === "search" && !query.trim())}
+                    disabled={
+                      busy ||
+                      (tab === "search" &&
+                        (!query.trim() ||
+                          !searchAlgorithms.includes(searchAlgorithm)))
+                    }
                     type="submit"
                   >
                     {busy
@@ -384,7 +435,7 @@ export default function App() {
             )}
             {report?.search && (
               <>
-                <h2>WANDS · BM25</h2>
+                <h2>WANDS · 搜索算法对照</h2>
                 <p>
                   {report.search.sample_count} 个测试查询 /{" "}
                   {report.search.catalog_size.toLocaleString()} 件商品
@@ -394,19 +445,25 @@ export default function App() {
                     <caption>搜索相关性：未标注结果按零相关性计分</caption>
                     <thead>
                       <tr>
-                        <th>指标</th>
-                        <th>BM25</th>
+                        <th>算法</th>
+                        {Object.keys(report.search.metrics).map((key) => (
+                          <th key={key}>{labels[key] ?? key}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.entries(report.search.metrics).map(
-                        ([key, value]) => (
-                          <tr key={key}>
-                            <th scope="row">{labels[key] ?? key}</th>
-                            <td>{value.toFixed(4)}</td>
-                          </tr>
-                        ),
-                      )}
+                      {Object.entries(
+                        report.search.algorithms ?? {
+                          bm25: { metrics: report.search.metrics },
+                        },
+                      ).map(([algorithm, values]) => (
+                        <tr key={algorithm}>
+                          <th scope="row">{algorithm}</th>
+                          {Object.keys(report.search!.metrics).map((key) => (
+                            <td key={key}>{values.metrics[key].toFixed(4)}</td>
+                          ))}
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -469,8 +526,7 @@ export default function App() {
         )}
       </main>
       <footer>
-        JoySearch 独立作品 · 真实公开数据上的离线实验 · 无线上 A/B 或
-        CTR/CVR/GMV 结论
+        JoySearch · 搜索与推荐实验室
       </footer>
     </div>
   );

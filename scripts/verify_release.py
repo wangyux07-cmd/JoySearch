@@ -1,3 +1,4 @@
+import argparse
 import json
 import subprocess
 import sys
@@ -7,13 +8,37 @@ from datetime import UTC, datetime
 from joysearch.common import ROOT, read_json, write_json
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    default_algorithms = (
+        ["bm25", "dense", "hybrid"]
+        if (ROOT / "artifacts/search_dense/manifest.json").exists()
+        else ["bm25"]
+    )
+    parser.add_argument(
+        "--search-algorithms",
+        nargs="+",
+        choices=["bm25", "dense", "hybrid"],
+        default=default_algorithms,
+    )
+    args = parser.parse_args()
     folder = ROOT / "reports/quality" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     folder.mkdir(parents=True)
     commands = [
         ([sys.executable, "-m", "pytest", "-q"], ROOT, "pytest"),
         ([sys.executable, "-m", "ruff", "check", "."], ROOT, "ruff"),
         (["npm.cmd", "run", "build"], ROOT / "frontend", "frontend_build"),
-        ([sys.executable, "scripts/evaluate.py", "--pipeline", "all"], ROOT, "real_evaluations"),
+        (
+            [
+                sys.executable,
+                "scripts/evaluate.py",
+                "--pipeline",
+                "all",
+                "--search-algorithms",
+                *args.search_algorithms,
+            ],
+            ROOT,
+            "real_evaluations",
+        ),
         ([sys.executable, "scripts/smoke.py"], ROOT, "api_smoke"),
         (
             [sys.executable, "scripts/smoke.py", "--base-url", "http://127.0.0.1:8000"],

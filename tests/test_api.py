@@ -22,7 +22,7 @@ def test_real_search_api():
         assert data["results"][0]["title"]
         for invalid in [
             {"query": " "},
-            {"query": "desk", "algorithm": "dense"},
+            {"query": "desk", "algorithm": "unknown"},
             {"query": "desk", "catalog_id": "amazon_baby_rec"},
             {"query": "desk", "top_k": 0},
         ]:
@@ -48,3 +48,16 @@ def test_recommendation_api_and_unready(tmp_path):
         assert (
             client.post("/api/v1/recommend", json={"catalog_id": "wands_search"}).status_code == 422
         )
+
+
+def test_disabled_dense_preserves_bm25():
+    with TestClient(create_app(enable_dense=False)) as client:
+        ready = client.get("/readyz").json()
+        assert ready["search_ready"] and not ready["dense_ready"]
+        assert ready["search_algorithms"] == ["bm25"]
+        for algorithm in ["dense", "hybrid"]:
+            response = client.post(
+                "/api/v1/search", json={"query": "chair", "algorithm": algorithm}
+            )
+            assert response.status_code == 503
+        assert client.post("/api/v1/search", json={"query": "chair"}).status_code == 200

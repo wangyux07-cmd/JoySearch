@@ -12,6 +12,7 @@ import pandas as pd
 from joysearch.common import read_json, write_json
 from joysearch.data.wands import file_hash
 from joysearch.evaluation import rec_eval, search_eval
+from joysearch.search.pipeline import SearchPipeline
 
 
 def code_manifest(root):
@@ -24,6 +25,7 @@ def code_manifest(root):
             *root.glob("frontend/*.json"),
             *root.glob("frontend/*.ts"),
             root / "requirements-lock.txt",
+            root / "requirements-dense-lock.txt",
             root / "pyproject.toml",
         ]
     )
@@ -34,7 +36,15 @@ def code_manifest(root):
     return {"sha256": digest, "files": hashes}
 
 
-def run(root, pipeline="all"):
+def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
+    if search_split != "test" and pipeline != "search":
+        raise ValueError("Validation split is available only with --pipeline search")
+    if (
+        not search_algorithms
+        or search_algorithms[0] != "bm25"
+        or len(set(search_algorithms)) != len(search_algorithms)
+    ):
+        raise ValueError("Search comparison must start with bm25 and contain no duplicates")
     run_id = "run_" + datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:6]
     folder = root / "reports" / run_id
     folder.mkdir(parents=True)
@@ -48,6 +58,8 @@ def run(root, pipeline="all"):
     config = {
         "seed": 42,
         "pipeline": pipeline,
+        "search_algorithms": list(search_algorithms),
+        "search_split": search_split,
         "timestamp_utc": datetime.now(UTC).isoformat(),
         "python": sys.version,
         "executable": sys.executable,
@@ -57,7 +69,7 @@ def run(root, pipeline="all"):
         "git_sha_reason": None if git.returncode == 0 else "Repository has no HEAD commit",
         "git_status": status.stdout.splitlines(),
         "code": code_manifest(root),
-        "test_reuse": repeated,
+        "test_reuse": repeated and search_split == "test",
         "test_reuse_note": "Regression reproducibility rerun; not untouched generalisation"
         if repeated
         else "First fixed-parameter test evaluation; no test-based model selection",
@@ -77,13 +89,47 @@ def run(root, pipeline="all"):
                 "httpx",
             ]
         },
-        "command": "conda run -n joysearch python scripts/evaluate.py --pipeline " + pipeline,
-        "model_artifact_sha256": {
-            str(p.relative_to(root)): file_hash(p)
-            for p in sorted((root / "artifacts").rglob("*"))
-            if p.is_file()
-        },
+        "command": (
+            "conda run -n joysearch python scripts/evaluate.py --pipeline "
+            + pipeline
+            + " --search-algorithms "
+            + " ".join(search_algorithms)
+            + " --search-split "
+            + search_split
+        ),
     }
+    artifact_directories = []
+    if pipeline in ["all", "search"]:
+        artifact_directories.append(root / "artifacts/search")
+        if any(algorithm != "bm25" for algorithm in search_algorithms):
+            artifact_directories.append(root / "artifacts/search_dense")
+            dense_manifest = read_json(root / "artifacts/search_dense/manifest.json")
+            artifact_directories.append(root / dense_manifest["model_path"])
+    if pipeline in ["all", "recommendation"]:
+        artifact_directories.append(root / "artifacts/recommendation")
+    config["model_artifact_sha256"] = {
+        p.relative_to(root).as_posix(): file_hash(p)
+        for directory in artifact_directories
+        for p in sorted(directory.rglob("*"))
+        if p.is_file() and ".cache" not in p.parts and p.name != "build_state.json"
+    }
+    if any(algorithm != "bm25" for algorithm in search_algorithms):
+        config["packages"].update(
+            {
+                name: importlib.metadata.version(name)
+                for name in [
+                    "torch",
+                    "sentence-transformers",
+                    "transformers",
+                    "tokenizers",
+                    "huggingface-hub",
+                ]
+            }
+        )
+    if search_split == "validation":
+        config["test_reuse_note"] = (
+            "Validation-only protocol check; fixed parameters, no hyperparameter search"
+        )
     data = {
         name: read_json(root / f"data/processed/{directory}/manifest.json")
         for name, directory in [("search", "wands"), ("recommendation", "amazon")]
@@ -106,17 +152,32 @@ def run(root, pipeline="all"):
     not_run = {"status": "not_run", "reason": f"CLI selected pipeline={pipeline}", "metrics": None}
     search, rec, latency = not_run.copy(), not_run.copy(), {}
     if pipeline in ["all", "search"]:
-        search, latency["search"], rows = search_eval.evaluate(
-            root / "data/processed/wands", root / "artifacts/search"
-        )
-        rows.to_csv(folder / "search_per_query.csv", index=False)
+        model = SearchPipeline.load(root, enable_dense=any(a != "bm25" for a in search_algorithms))
+        algorithm_reports, search_latency, frames = {}, {}, []
+        for algorithm in search_algorithms:
+            if algorithm not in model.algorithms:
+                raise ValueError(f"Requested search algorithm unavailable: {algorithm}")
+            metrics, timing, rows = search_eval.evaluate(
+                root / "data/processed/wands",
+                root / "artifacts/search",
+                algorithm,
+                search_split,
+                model,
+            )
+            algorithm_reports[algorithm] = metrics
+            search_latency[algorithm] = timing
+            frames.append(rows)
+        search = {**algorithm_reports["bm25"], "algorithms": algorithm_reports}
+        latency["search"] = search_latency
+        pd.concat(frames, ignore_index=True).to_csv(folder / "search_per_query.csv", index=False)
     if pipeline in ["all", "recommendation"]:
         rec, latency["recommendation"], rows = rec_eval.evaluate(
             root / "data/processed/amazon", root / "artifacts/recommendation"
         )
         rows.to_csv(folder / "recommendation_per_user.csv", index=False)
     if search["status"] == "completed":
-        assert all(0 <= value <= 1 for value in search["metrics"].values())
+        for report in search["algorithms"].values():
+            assert all(0 <= value <= 1 for value in report["metrics"].values())
     if rec["status"] == "completed":
         for metrics in rec["algorithms"].values():
             assert all(
@@ -124,6 +185,26 @@ def run(root, pipeline="all"):
                 for key in ["hr_at_10", "ndcg_at_10", "catalog_coverage_at_10", "fallback_rate"]
             )
     comparisons = []
+    if search["status"] == "completed":
+        for algorithm in search_algorithms[1:]:
+            for key, baseline in search["metrics"].items():
+                candidate = search["algorithms"][algorithm]["metrics"][key]
+                comparisons.append(
+                    {
+                        "dataset": "wands_search",
+                        "split": search_split,
+                        "metric": key,
+                        "baseline_algorithm": "bm25",
+                        "candidate_algorithm": algorithm,
+                        "baseline_value": baseline,
+                        "candidate_value": candidate,
+                        "delta": candidate - baseline,
+                        "delta_pct": 100 * (candidate - baseline) / abs(baseline)
+                        if baseline
+                        else None,
+                        "comparability_note": "Same frozen query IDs, complete WANDS catalog, qrels and formulas",
+                    }
+                )
     if rec["status"] == "completed":
         for key in ["hr_at_10", "ndcg_at_10", "catalog_coverage_at_10", "fallback_rate"]:
             baseline, candidate = [rec["algorithms"][a][key] for a in ["popularity", "itemcf"]]
@@ -186,7 +267,10 @@ def run(root, pipeline="all"):
         "|---|---|---|",
     ]
     if search["status"] == "completed":
-        lines.extend(f"| BM25 | {key} | {value:.8f} |" for key, value in search["metrics"].items())
+        for algorithm, report in search["algorithms"].items():
+            lines.extend(
+                f"| {algorithm} | {key} | {value:.8f} |" for key, value in report["metrics"].items()
+            )
     if rec["status"] == "completed":
         for algorithm, values in rec["algorithms"].items():
             lines.extend(
@@ -204,8 +288,24 @@ def run(root, pipeline="all"):
             "|---|---|---|",
         ]
         lines.extend(
-            f"| {r['metric']} | {r['delta']:+.8f} | {r['delta_pct']} |" for r in comparisons
+            f"| {r['metric']} | {r['delta']:+.8f} | {r['delta_pct']} |"
+            for r in comparisons
+            if r["dataset"] == "amazon_baby_rec"
         )
+    if search["status"] == "completed" and len(search_algorithms) > 1:
+        lines += [
+            "",
+            "搜索对照：同一固定查询与完整商品库，正负差值均保存于 comparisons.csv。",
+            "MiniLM 固定 revision、128 tokens、384维归一化向量；RRF k=60，每路 Top100，等权。",
+            "配置在 test 前固定；validation 只用于验证协议，未据 test 调参。",
+        ]
+    if search["status"] == "completed" and len(search_algorithms) > 1:
+        lines += ["", "| 搜索候选 | 指标 | 相对 BM25 绝对差 | 相对变化 % |", "|---|---|---|---|"]
+        for row in comparisons:
+            if row["dataset"] == "wands_search":
+                lines.append(
+                    f"| {row['candidate_algorithm']} | {row['metric']} | {row['delta']:+.8f} | {row['delta_pct']} |"
+                )
     lines += [
         "",
         (
@@ -232,22 +332,8 @@ def run(root, pipeline="all"):
         "```",
     ]
     (folder / "summary.md").write_text("\n".join(lines), encoding="utf-8")
-    if pipeline == "all":
+    if pipeline == "all" and search_split == "test":
         write_json(root / "reports/latest.json", {"status": "verified", "run_id": run_id})
-        evidence = [
-            "# 简历可核验证据",
-            "",
-            f"实测运行：{run_id}。仅为离线指标，不代表业务效果。",
-            "",
-            "| 能力 | 已验证实现 | 实测结果 | 基线／比较 | 限制 |",
-            "|---|---|---|---|---|",
-            f"| 搜索 | 稀疏 BM25，{search['catalog_size']} 商品，{search['sample_count']} held-out queries | {search['metrics']} | P0 单算法，无搜索提升声明 | 稀疏 qrels，未标注为 0 |",
-            f"| 个性化 | train-only sparse ItemCF，{rec['users_evaluated']} 用户，{rec['catalog_size']} train items | {rec['algorithms']} | 见 comparisons.csv 的绝对差与相对变化 | rating proxy；抽样用户；不可推荐目标保留为 misses |",
-            "",
-            "延迟与设备见运行目录 latency.json/config.json；所有结果由脚本计算。",
-            "尚未运行：Dense、RRF、LTR、Two-Tower、线上 A/B；不声称 CTR/CVR/GMV 提升。",
-        ]
-        (root / "reports/resume_evidence.md").write_text("\n".join(evidence), encoding="utf-8")
     print(f"Report: {folder}")
     if search["status"] == "completed":
         print("Search:", search["metrics"])

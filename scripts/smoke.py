@@ -26,6 +26,15 @@ def smoke(base_url=None):
         assert search.status_code == 200, search.text
         assert search.json()["catalog_id"] == "wands_search"
         assert len(search.json()["results"]) == 10
+        if ready.json()["dense_ready"]:
+            for algorithm in ["dense", "hybrid"]:
+                semantic = client.post(
+                    "/api/v1/search",
+                    json={"query": "salon chair", "algorithm": algorithm, "debug": True},
+                )
+                assert semantic.status_code == 200, semantic.text
+                assert len(semantic.json()["results"]) == 10
+                assert semantic.json()["model_version"] in ["dense-v1", "rrf-v1"]
         users = client.get("/api/v1/users/demo").json()["users"]
         rankings = []
         for user in users[:2]:
@@ -39,7 +48,9 @@ def smoke(base_url=None):
         cold = client.post("/api/v1/recommend", json={"user_id": "unknown"}).json()
         assert cold["fallback_reason"] == "cold_user"
         assert (
-            client.post("/api/v1/search", json={"query": "desk", "algorithm": "dense"}).status_code
+            client.post(
+                "/api/v1/search", json={"query": "desk", "algorithm": "unknown"}
+            ).status_code
             == 422
         )
         report = client.get("/api/v1/reports/summary").json()

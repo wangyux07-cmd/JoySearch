@@ -6,19 +6,18 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from joysearch.api.schemas import RecRequest, SearchRequest
+from joysearch.api.schemas import RecRequest, SearchRequest, SearchResponse
 from joysearch.common import ROOT, RecommendationContext, read_json
 from joysearch.recommendation.pipeline import RecPipeline
-from joysearch.search.bm25 import BM25Index
 from joysearch.search.pipeline import SearchPipeline
 
 
-def create_app(root: Path = ROOT):
+def create_app(root: Path = ROOT, enable_dense: bool = True):
     @asynccontextmanager
     async def lifespan(app):
         search_path = root / "artifacts/search"
         app.state.search = (
-            SearchPipeline(BM25Index.load(search_path)) if search_path.exists() else None
+            SearchPipeline.load(root, enable_dense=enable_dense) if search_path.exists() else None
         )
         rec_path = root / "artifacts/recommendation"
         app.state.rec = RecPipeline.load(rec_path) if rec_path.exists() else None
@@ -39,6 +38,8 @@ def create_app(root: Path = ROOT):
         return JSONResponse(
             {
                 **states,
+                "search_algorithms": app.state.search.algorithms if app.state.search else [],
+                "dense_ready": app.state.search is not None and app.state.search.dense is not None,
                 "versions": {
                     "search": app.state.search.version if app.state.search else None,
                     "rec": app.state.rec.version if app.state.rec else None,
@@ -48,13 +49,20 @@ def create_app(root: Path = ROOT):
             status_code=200 if all(states.values()) else 503,
         )
 
-    @app.post("/api/v1/search")
+    @app.post(
+        "/api/v1/search",
+        response_model=SearchResponse,
+        response_model_exclude_none=True,
+        responses={503: {"description": "Requested search model is unavailable"}},
+    )
     def search(request: SearchRequest):
         pipeline = app.state.search
         if pipeline is None:
             raise HTTPException(503, "Search index missing; run scripts/build_search.py")
+        if request.algorithm not in pipeline.algorithms:
+            raise HTTPException(503, f"{request.algorithm} unavailable; run scripts/build_dense.py")
         started = perf_counter()
-        candidates = pipeline.search(request.query, request.top_k)
+        candidates = pipeline.search(request.query, request.top_k, request.algorithm)
         results = []
         for c in candidates:
             metadata = pipeline.metadata[c.item_id]
@@ -65,14 +73,15 @@ def create_app(root: Path = ROOT):
                     "title": metadata["product_name"],
                     "score": c.score,
                     "rank": c.rank,
-                    "sources": [c.source],
+                    "sources": c.evidence.get("sources", [c.source]),
+                    **({"evidence": c.evidence} if request.debug else {}),
                     "metadata": {"product_class": metadata["product_class"]},
                 }
             )
         return {
             "catalog_id": request.catalog_id,
             "algorithm": request.algorithm,
-            "model_version": pipeline.version,
+            "model_version": pipeline.versions[request.algorithm],
             "results": results,
             "degraded": False,
             "trace_id": uuid4().hex,

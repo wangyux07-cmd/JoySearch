@@ -2,7 +2,7 @@
 
 Product search and personalised recommendations with FastAPI, React and reproducible offline evaluation.
 
-- **Search:** BM25 over the WANDS product catalog.
+- **Search:** BM25, MiniLM semantic retrieval and RRF hybrid ranking over WANDS.
 - **Recommendations:** Popularity and sparse ItemCF over Amazon Baby Products ratings.
 - **Evaluation:** fixed held-out splits, algorithm comparisons, latency measurements and versioned reports.
 
@@ -49,13 +49,36 @@ python scripts/evaluate.py --pipeline all
 
 Existing prepared data and models can be reused when restarting the app. Source hashes, split membership and sampling settings are recorded under `data/processed`; model artifacts are under `artifacts`.
 
+## Semantic search
+
+Install the optional CPU dependencies in the same Conda environment:
+
+```powershell
+python -m pip install "torch==2.9.1+cpu" --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -r requirements-dense-lock.txt
+python scripts/build_dense.py
+```
+
+The builder downloads the fixed MiniLM revision on first use, encodes the catalog on CPU and saves progress every 512 products. Re-running resumes an interrupted build; an already completed matching index is reused. Query serving loads the local encoder and does not contact Hugging Face.
+
+Select BM25, Dense or Hybrid in Search when the corresponding artifacts are ready. Dense ranks the complete catalog by exact cosine over normalized 384-dimensional vectors. Hybrid fuses each channel's Top100 using equal-weight RRF with `k=60`. Settings are in `configs/dense.json`.
+
+```powershell
+python scripts/evaluate.py --pipeline search --search-algorithms bm25 dense hybrid --search-split validation
+python scripts/evaluate.py --pipeline all --search-algorithms bm25 dense hybrid
+```
+
 ## Results
 
-P0 evaluation: 96 held-out WANDS queries against 42,994 products; 10,000 Amazon users against the complete 16,574-item training catalog.
+Evaluation: 96 held-out WANDS queries against 42,994 products; 10,000 Amazon users against the complete 16,574-item training catalog.
 
 | Search algorithm | NDCG@10 | MRR@10 | JudgedRecall@100 | JudgmentCoverage@10 |
 |---|---:|---:|---:|---:|
 | BM25 | 0.624031 | 0.782217 | 0.373704 | 0.794792 |
+| Dense | 0.645170 | 0.834821 | 0.368893 | 0.825000 |
+| Hybrid | 0.687759 | 0.866464 | 0.392750 | 0.857292 |
+
+Hybrid changes NDCG@10 by **+0.063728 (+10.21%)** relative to BM25 on this fixed test set. Dense has higher NDCG but slightly lower JudgedRecall@100 than BM25. Parameters were fixed before this comparison.
 
 | Recommendation algorithm | HR@10 | NDCG@10 | CatalogCoverage@10 |
 |---|---:|---:|---:|
@@ -63,6 +86,15 @@ P0 evaluation: 96 held-out WANDS queries against 42,994 products; 10,000 Amazon 
 | ItemCF | 0.0046 | 0.002475 | 0.820261 |
 
 ItemCF trades lower hit rate for broader catalog coverage in this experiment. Its HR@10 difference from Popularity is −0.0117; NDCG@10 differs by −0.005098.
+
+
+Warm CPU inference over the same 96 test queries:
+
+| Algorithm | p50 (ms) | p95 (ms) |
+|---|---:|---:|
+| bm25 | 1.150 | 3.622 |
+| dense | 26.148 | 29.672 |
+| hybrid | 40.703 | 52.189 |
 
 Each evaluation generates a local `reports/run_<UTC>_<id>/` directory with metrics, paired comparisons, per-query/user diagnostics, latency measurements and source/configuration hashes. `reports/latest.json` identifies the latest complete run. Evaluation outputs are generated locally and excluded from Git.
 
@@ -133,6 +165,9 @@ For a short demo: search `salon chair`; compare ItemCF for the first two anonymo
 ## Sources
 
 - [WANDS](https://github.com/wayfair/WANDS), MIT licence. Chen et al., *WANDS: Dataset for Product Search Relevance Assessment*, ECIR 2022.
+- [MiniLM model card](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), Apache-2.0. The fixed revision is recorded in `configs/dense.json`.
 - [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/) and its [5-core rating-only files](https://amazon-reviews-2023.github.io/data_processing/5core.html). Hou et al., *Bridging Language and Items for Retrieval and Recommendation*, 2024. Dataset use and redistribution follow the source terms.
 
 Raw data, prepared interactions, model weights, user mappings and local caches stay outside Git.
+
+See [architecture](docs/architecture.md) and [evaluation protocol](docs/evaluation.md) for the module contracts and metric definitions.

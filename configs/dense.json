@@ -1,0 +1,11 @@
+{
+  "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+  "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+  "max_seq_length": 128,
+  "batch_size": 64,
+  "chunk_size": 512,
+  "torch_threads": 4,
+  "rrf_k": 60,
+  "candidate_k": 100,
+  "parameter_policy": "Fixed before validation/test; no test-based tuning"
+}
