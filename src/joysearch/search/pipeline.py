@@ -3,6 +3,7 @@ from joysearch.search.bm25 import BM25Index
 from joysearch.search.dense import DenseIndex
 from joysearch.search.features import SearchFeatures
 from joysearch.search.fusion import reciprocal_rank_fusion
+from joysearch.search.query import CatalogAttributes, QueryUnderstanding
 
 
 class SearchPipeline:
@@ -12,6 +13,8 @@ class SearchPipeline:
         self.rrf_k = rrf_k
         self.candidate_k = candidate_k
         self.ranker = ranker
+        self.query_understanding = QueryUnderstanding()
+        self.catalog_attributes = CatalogAttributes(index.products, self.query_understanding)
         self.features = SearchFeatures(index.products) if ranker is not None else None
         if dense is not None:
             if index.item_ids.tolist() != dense.item_ids.tolist():
@@ -33,6 +36,9 @@ class SearchPipeline:
         if ranker is not None:
             self.algorithms.append("ltr")
             self.versions["ltr"] = ranker.version
+        if dense is not None:
+            self.algorithms.append("query_hybrid")
+            self.versions["query_hybrid"] = "query-rrf-v1"
 
     @classmethod
     def load(cls, root, enable_dense=True, enable_ltr=True):
@@ -60,6 +66,13 @@ class SearchPipeline:
             return self.dense.manifest
         if algorithm == "ltr":
             return self.ranker.manifest
+        if algorithm == "query_hybrid":
+            return {
+                "version": "query-rrf-v1",
+                "query_rules": self.query_understanding.config,
+                "candidate_k": self.candidate_k,
+                "rrf_k": self.rrf_k,
+            }
         return {
             "version": "rrf-v1",
             "rrf_k": self.rrf_k,
@@ -75,6 +88,9 @@ class SearchPipeline:
             return self.index.retrieve(query, k)
         if algorithm == "dense":
             return self.dense.retrieve(query, k)
+        if algorithm == "query_hybrid":
+            pool, _, _ = self.query_candidates(query)
+            return pool[:k]
         if algorithm == "ltr":
             candidates, rankings = self.hybrid_candidates(query)
             features = self.features.transform(query, candidates, rankings, self.candidate_k)
@@ -92,3 +108,25 @@ class SearchPipeline:
             "dense": self.dense.retrieve(query, self.candidate_k),
         }
         return reciprocal_rank_fusion(rankings, self.candidate_k, self.rrf_k), rankings
+
+    def query_candidates(self, query, mode="expansion", weight=None, rankings=None, plan=None):
+        """Fixed Top100 budget; original channels remain intact in extraction/expansion."""
+        if mode not in {"original", "normalize", "extraction", "expansion"}:
+            raise ValueError(f"Unknown query mode: {mode}")
+        plan = plan or self.query_understanding.parse(query)
+        text = plan.normalized_query if mode == "normalize" else query
+        rankings = (
+            dict(rankings)
+            if rankings is not None
+            else {
+                "bm25": self.index.retrieve(text, self.candidate_k),
+                "dense": self.dense.retrieve(text, self.candidate_k),
+            }
+        )
+        if mode == "expansion" and plan.rewrites:
+            rankings["rewrite_bm25"] = self.index.retrieve(plan.rewrites[0], self.candidate_k)
+        candidates = reciprocal_rank_fusion(rankings, self.candidate_k, self.rrf_k)
+        if mode in {"extraction", "expansion"}:
+            weight = self.query_understanding.config["soft_weight"] if weight is None else weight
+            candidates = self.catalog_attributes.rerank(plan, candidates, weight)
+        return candidates, rankings, plan

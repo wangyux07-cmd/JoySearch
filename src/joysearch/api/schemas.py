@@ -8,7 +8,7 @@ class SearchRequest(BaseModel):
     catalog_id: Literal["wands_search"] = "wands_search"
     query: str = Field(min_length=1, max_length=500)
     top_k: int = Field(default=10, ge=1, le=100)
-    algorithm: Literal["bm25", "dense", "hybrid", "ltr"] = "bm25"
+    algorithm: Literal["bm25", "dense", "hybrid", "ltr", "query_hybrid"] = "bm25"
     debug: bool = False
 
     @field_validator("query")
@@ -41,9 +41,10 @@ class SearchResult(BaseModel):
 
 class SearchResponse(BaseModel):
     catalog_id: Literal["wands_search"]
-    algorithm: Literal["bm25", "dense", "hybrid", "ltr"]
+    algorithm: Literal["bm25", "dense", "hybrid", "ltr", "query_hybrid"]
     model_version: str
     results: list[SearchResult]
     degraded: bool
     trace_id: str
     latency_ms: float
+    query_plan: dict | None = None

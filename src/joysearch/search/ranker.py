@@ -12,6 +12,7 @@ from joysearch.search.features import FEATURE_NAMES
 def retrieval_signature(root):
     paths = [
         "configs/dense.json",
+        "configs/query.json",
         "artifacts/search/manifest.json",
         "artifacts/search/weights.npz",
         "artifacts/search/vocabulary.json",
@@ -21,7 +22,7 @@ def retrieval_signature(root):
         "artifacts/search_dense/embeddings.npy",
         *[
             f"src/joysearch/search/{name}.py"
-            for name in ["bm25", "dense", "fusion", "features", "pipeline"]
+            for name in ["bm25", "dense", "fusion", "features", "pipeline", "query"]
         ],
     ]
     return {path: file_hash(root / path) for path in paths}

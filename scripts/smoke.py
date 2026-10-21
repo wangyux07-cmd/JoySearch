@@ -27,14 +27,16 @@ def smoke(base_url=None):
         assert search.json()["catalog_id"] == "wands_search"
         assert len(search.json()["results"]) == 10
         if ready.json()["dense_ready"]:
-            for algorithm in ["dense", "hybrid"]:
+            for algorithm in ["dense", "hybrid", "query_hybrid"]:
                 semantic = client.post(
                     "/api/v1/search",
                     json={"query": "salon chair", "algorithm": algorithm, "debug": True},
                 )
                 assert semantic.status_code == 200, semantic.text
                 assert len(semantic.json()["results"]) == 10
-                assert semantic.json()["model_version"] in ["dense-v1", "rrf-v1"]
+                assert semantic.json()["model_version"] in ["dense-v1", "rrf-v1", "query-rrf-v1"]
+        if "query_hybrid" in ready.json()["search_algorithms"]:
+            assert semantic.json()["query_plan"]["original_query"] == "salon chair"
         if ready.json()["ltr_ready"]:
             ranked = client.post(
                 "/api/v1/search", json={"query": "salon chair", "algorithm": "ltr", "debug": True}

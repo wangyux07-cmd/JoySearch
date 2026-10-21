@@ -19,7 +19,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--search-algorithms",
         nargs="+",
-        choices=["bm25", "dense", "hybrid", "ltr"],
+        choices=["bm25", "dense", "hybrid", "ltr", "query_hybrid"],
         default=default_algorithms,
     )
     default_rec = ["popularity", "itemcf"]
@@ -31,6 +31,8 @@ if __name__ == "__main__":
         choices=["popularity", "itemcf", "two_tower"],
         default=default_rec,
     )
+    if "dense" in default_algorithms:
+        default_algorithms.append("query_hybrid")
     parser.add_argument("--recall-diagnostics", action="store_true")
     args = parser.parse_args()
     folder = ROOT / "reports/quality" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")

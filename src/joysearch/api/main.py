@@ -89,6 +89,8 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
             "algorithm": request.algorithm,
             "model_version": pipeline.versions[request.algorithm],
             "results": results,
+            "query_plan": pipeline.query_understanding.parse(request.query).to_dict()
+            if request.debug else None,
             "degraded": False,
             "trace_id": uuid4().hex,
             "latency_ms": (perf_counter() - started) * 1000,

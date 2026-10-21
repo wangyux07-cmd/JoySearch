@@ -125,7 +125,7 @@ export default function App() {
         if (
           !Array.isArray(algorithms) ||
           !algorithms.every((a) =>
-            ["bm25", "dense", "hybrid", "ltr"].includes(a),
+            ["bm25", "dense", "hybrid", "ltr", "query_hybrid"].includes(a),
           )
         ) {
           throw new Error("后端搜索能力合同不匹配，请重启当前版本 API。");
@@ -264,6 +264,7 @@ export default function App() {
                           ["dense", "Dense · 语义检索"],
                           ["hybrid", "Hybrid · RRF 融合"],
                           ["ltr", "LambdaMART · 学习排序"],
+                            ["query_hybrid", "Query Hybrid · 查询理解"],
                         ].map(([value, label]) => (
                           <option
                             key={value}

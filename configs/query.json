@@ -1,0 +1,13 @@
+{
+  "version": "query-rules-v1",
+  "development_sources": "Frozen WANDS train queries and unlabeled product catalog only",
+  "max_rewrites": 1,
+  "soft_weight": 0.0,
+  "validation_weights": [0.0, 0.002],
+  "aliases": {"blk": "black", "grey": "gray", "couch": "sofa", "carpet": "rug", "bed side table": "nightstand", "twinxl": "twin xl"},
+  "categories": ["coffee table", "end table", "side table", "console table", "dining table", "tv stand", "bar stool", "wall art", "wall sconce", "shower head", "duvet cover", "curtain", "pillow", "rug", "bed", "mattress", "chair", "sofa", "loveseat", "sectional", "cabinet", "dresser", "desk", "mirror", "tile", "vanity", "faucet", "lamp", "chandelier", "shelf", "bookcase", "basket", "sink"],
+  "color": ["black", "white", "gray", "grey", "blue", "navy", "red", "green", "olive", "yellow", "orange", "purple", "plum", "magenta", "pink", "brown", "beige", "cream", "gold", "silver", "bronze", "turquoise", "auburn"],
+  "material": ["faux leather", "stainless steel", "solid wood", "manufactured wood", "wood", "wooden", "leather", "velvet", "glass", "marble", "teak", "rattan", "acrylic", "metal", "brass", "chrome", "cotton", "linen", "silk", "resin"],
+  "size": ["twin xl", "twinxl", "twin", "queen", "king", "full"],
+  "field_keys": {"color": ["color", "upholsterycolor", "topcolor", "basecolor", "finish"], "material": ["primarymaterial", "framematerial", "upholsterymaterial", "topmaterial", "basematerial"], "size": ["mattresssize", "bedsize", "size"]}
+}

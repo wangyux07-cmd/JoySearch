@@ -2,7 +2,7 @@
 
 Product search and personalised recommendations with FastAPI, React and reproducible offline evaluation.
 
-- **Search:** BM25, MiniLM semantic retrieval, RRF fusion and LambdaMART reranking over WANDS.
+- **Search:** BM25, MiniLM semantic retrieval, RRF fusion, query understanding and LambdaMART reranking over WANDS.
 - **Recommendations:** Popularity, sparse ItemCF and history-based Two-Tower retrieval over Amazon Baby Products ratings.
 - **Evaluation:** fixed held-out splits, algorithm comparisons, latency measurements and versioned reports.
 
@@ -109,9 +109,10 @@ Evaluation: 96 held-out WANDS queries against 42,994 products; 10,000 Amazon use
 | BM25 | 0.624031 | 0.782217 | 0.373704 | 0.794792 |
 | Dense | 0.645170 | 0.834821 | 0.368893 | 0.825000 |
 | Hybrid | 0.687759 | 0.866464 | 0.392750 | 0.857292 |
+| Query Hybrid | 0.688063 | 0.866464 | 0.394610 | 0.858333 |
 | LambdaMART | 0.628400 | 0.830481 | 0.392750 | 0.764583 |
 
-Hybrid changes NDCG@10 by **+0.063728 (+10.21%)** relative to BM25 on this fixed test set. Dense has higher NDCG but slightly lower JudgedRecall@100 than BM25. LambdaMART changes NDCG@10 by **-0.059359 (-8.63%)** relative to Hybrid. Its lower JudgmentCoverage@10 accompanies more unjudged Top10 results. The supervised model remains an optional comparison; Hybrid has the highest measured NDCG@10. Retrieval settings and the ranker configuration were fixed before test evaluation; only the boosting iteration used validation. This is a repeated fixed-test regression comparison, not a new untouched test set.
+Hybrid changes NDCG@10 by **+0.063728 (+10.21%)** relative to BM25 on this fixed test set. Dense has higher NDCG but slightly lower JudgedRecall@100 than BM25. LambdaMART changes NDCG@10 by **-0.059359 (-8.63%)** relative to Hybrid. Its lower JudgmentCoverage@10 accompanies more unjudged Top10 results. Query Hybrid adds **+0.000304 NDCG@10** and **+0.001860 JudgedRecall@100** over Hybrid: one query improves and 95 are unchanged. The default remains BM25. Retrieval settings and the ranker configuration were fixed before test evaluation; only the boosting iteration used validation. Query rules use train queries and unlabeled catalog text; their soft weight uses validation. This is a repeated fixed-test regression comparison, not a new untouched test set.
 
 | Recommendation algorithm | HR@10 | NDCG@10 | CatalogCoverage@10 |
 |---|---:|---:|---:|
@@ -126,18 +127,19 @@ Warm CPU inference over the same 96 test queries on an Intel Core i5-1240P (four
 
 | Algorithm | p50 (ms) | p95 (ms) |
 |---|---:|---:|
-| bm25 | 1.916 | 5.198 |
-| dense | 34.545 | 42.501 |
-| hybrid | 36.173 | 39.449 |
-| ltr | 44.227 | 49.111 |
+| bm25 | 1.071 | 3.605 |
+| dense | 21.677 | 25.103 |
+| hybrid | 23.247 | 27.705 |
+| ltr | 28.998 | 34.842 |
+| query_hybrid | 27.511 | 32.137 |
 
 Warm recommendation inference over all 10,000 test users:
 
 | Algorithm | p50 (ms) | p95 (ms) |
 |---|---:|---:|
-| popularity | 0.026 | 0.042 |
-| itemcf | 1.571 | 2.660 |
-| two_tower | 2.875 | 4.000 |
+| popularity | 0.020 | 0.023 |
+| itemcf | 1.057 | 1.178 |
+| two_tower | 1.826 | 2.140 |
 
 Each evaluation generates a local `reports/run_<UTC>_<id>/` directory with metrics, paired comparisons, per-query/user diagnostics, latency measurements and source/configuration hashes. `reports/latest.json` identifies the latest complete run. Evaluation outputs are generated locally and excluded from Git.
 
@@ -185,6 +187,21 @@ The untruncated search union averages 159.32 candidates and has judged recall 0.
 | All three, equal-weight RRF | 0.0815 | 0.0158 | 0.007388 |
 
 Removing native ItemCF from the three-channel fusion changes CandidateHit@100 by +0.0117, to 0.0932. Its unique candidates do not translate into a fixed-budget gain in this experiment. Native ItemCF underfills B for 26.36% of users, averaging 85.64 candidates; the separate served baseline retains Popularity completion and reproduces HR@10=0.0046. All 2,023 unavailable test targets remain misses. The complete diagnostic run took 160.60 seconds on CPU and produced 57.10 MB of Parquet traces, without retraining or rebuilding indexes.
+
+## Query understanding
+
+Select **Query Hybrid** to retain the original BM25/Dense channels and add a
+rewrite-BM25 channel when finite aliases or unit rules apply. Final candidates
+remain capped at 100. The shared parser preserves the original query, extracts
+category/color/material/size and negation, and marks unsupported price, stock and
+delivery requirements. API requests with `debug: true` return the `query_plan`.
+
+Validation compared soft attribute weights 0 and 0.002 and selected 0; the larger
+weight reduced NDCG. Product attributes aggregate variants, so missing fields do
+not reject products and no hard filtering is performed. Human slot-quality
+metrics remain unevaluated until independent annotations are available. See
+[query understanding](docs/query_understanding.md) for the annotation guide,
+fixed-budget ablations, saved validation selection and reproducible commands.
 
 ## Architecture
 

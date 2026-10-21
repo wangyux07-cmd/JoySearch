@@ -9,7 +9,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--search-algorithms",
         nargs="+",
-        choices=["bm25", "dense", "hybrid", "ltr"],
+        choices=["bm25", "dense", "hybrid", "ltr", "query_hybrid"],
         default=["bm25"],
     )
     parser.add_argument("--search-split", choices=["validation", "test"], default="test")
