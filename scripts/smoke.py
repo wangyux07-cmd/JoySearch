@@ -35,6 +35,14 @@ def smoke(base_url=None):
                 assert semantic.status_code == 200, semantic.text
                 assert len(semantic.json()["results"]) == 10
                 assert semantic.json()["model_version"] in ["dense-v1", "rrf-v1"]
+        if ready.json()["ltr_ready"]:
+            ranked = client.post(
+                "/api/v1/search", json={"query": "salon chair", "algorithm": "ltr", "debug": True}
+            )
+            assert ranked.status_code == 200, ranked.text
+            assert ranked.json()["model_version"] == "lambdamart-v1"
+            assert len(ranked.json()["results"]) == 10
+            assert all("feature_values" in r["evidence"] for r in ranked.json()["results"])
         users = client.get("/api/v1/users/demo").json()["users"]
         rankings = []
         for user in users[:2]:

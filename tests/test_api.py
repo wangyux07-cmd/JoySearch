@@ -55,7 +55,7 @@ def test_disabled_dense_preserves_bm25():
         ready = client.get("/readyz").json()
         assert ready["search_ready"] and not ready["dense_ready"]
         assert ready["search_algorithms"] == ["bm25"]
-        for algorithm in ["dense", "hybrid"]:
+        for algorithm in ["dense", "hybrid", "ltr"]:
             response = client.post(
                 "/api/v1/search", json={"query": "chair", "algorithm": algorithm}
             )

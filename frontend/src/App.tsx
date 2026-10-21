@@ -120,7 +120,9 @@ export default function App() {
         const algorithms = data.search_algorithms;
         if (
           !Array.isArray(algorithms) ||
-          !algorithms.every((a) => ["bm25", "dense", "hybrid"].includes(a))
+          !algorithms.every((a) =>
+            ["bm25", "dense", "hybrid", "ltr"].includes(a),
+          )
         ) {
           throw new Error("后端搜索能力合同不匹配，请重启当前版本 API。");
         }
@@ -247,6 +249,7 @@ export default function App() {
                           ["bm25", "BM25 · 关键词"],
                           ["dense", "Dense · 语义检索"],
                           ["hybrid", "Hybrid · RRF 融合"],
+                          ["ltr", "LambdaMART · 学习排序"],
                         ].map(([value, label]) => (
                           <option
                             key={value}
@@ -525,9 +528,7 @@ export default function App() {
           </section>
         )}
       </main>
-      <footer>
-        JoySearch · 搜索与推荐实验室
-      </footer>
+      <footer>JoySearch · 搜索与推荐实验室</footer>
     </div>
   );
 }

@@ -7,7 +7,7 @@ JoySearch is a modular monolith. The README describes product behaviour; evaluat
 | Module | Owns | Stable boundaries |
 |---|---|---|
 | data | Schema, catalog IDs, frozen splits and provenance | Input datasets and split membership |
-| search | BM25, local MiniLM encoding, exact cosine and RRF | Recommendation identity or training |
+| search | BM25, local MiniLM encoding, RRF, shared features and offline LambdaMART | Recommendation identity or test-based tuning |
 | evaluation | Fixed-population metrics, paired comparisons and latency | HTTP/UI and model tuning on test judgments |
 | api | Request/response contract, readiness and lifecycle | Training and quality formulas |
 | frontend | Algorithm selection and observed results | Loading model files or calculating benchmark values |
@@ -16,7 +16,7 @@ JoySearch is a modular monolith. The README describes product behaviour; evaluat
 
 | ID | Direction | Contract | Failure and owner |
 |---|---|---|---|
-| C1 | UI → API | POST /api/v1/search, catalog=wands_search, algorithm=bm25/dense/hybrid, top_k=1..100 | API rejects invalid input with 422; unavailable algorithm with 503 |
+| C1 | UI → API | POST /api/v1/search, catalog=wands_search, algorithm=bm25/dense/hybrid/ltr, top_k=1..100 | API rejects invalid input with 422; unavailable algorithm with 503 |
 | C2 | API → SearchPipeline | search(query,k,algorithm) → Candidate[] | Search checks catalog compatibility at load; API reports capability readiness |
 | C3 | Pipeline → retrievers/fusion | retrieve(query,k), normalized cosine, rank-only RRF | Domain preserves IDs, stable ties and channel evidence |
 | C4 | Offline builder → artifacts | Fixed model revision, ordered catalog, checkpoint and final manifest | Builder rejects changed resume signature; incomplete build stays unavailable |
@@ -69,3 +69,4 @@ UI state: idle → submitting → completed/empty/error. The page retains query 
 
 Semantic retrieval adds dense.py and fusion.py because encoding/index persistence and rank fusion change independently. Existing SearchPipeline, API schemas, search evaluator and frontend are the direct consumers. Recommendation modules are unchanged. Replacing the embedding model affects the encoder/build configuration and artifacts; changing RRF affects fusion and its configuration, without modifying metric formulas.
 
+LambdaMART adds `features.py` for catalog-only feature extraction and `ranker.py` for offline fitting, persistence and reranking. `scripts/train_ranker.py` invokes domain training with the frozen train/validation query split. The trainer caches real RRF Top100 pools, excludes unjudged rows from supervised fitting and publishes a model manifest after successful fitting. Requests only load the native model and rerank the same Top100 pool, independent of requested output size. Feature order and retrieval signatures are checked when loading. `/readyz` exposes `ltr_ready`; missing LTR artifacts keep the selector unavailable and requests return 503 with the training command.

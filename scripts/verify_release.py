@@ -14,10 +14,12 @@ if __name__ == "__main__":
         if (ROOT / "artifacts/search_dense/manifest.json").exists()
         else ["bm25"]
     )
+    if (ROOT / "artifacts/search_ltr/manifest.json").exists():
+        default_algorithms.append("ltr")
     parser.add_argument(
         "--search-algorithms",
         nargs="+",
-        choices=["bm25", "dense", "hybrid"],
+        choices=["bm25", "dense", "hybrid", "ltr"],
         default=default_algorithms,
     )
     args = parser.parse_args()

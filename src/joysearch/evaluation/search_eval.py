@@ -68,6 +68,7 @@ def evaluate(source, artifact, algorithm="bm25", split="test", model=None):
         "eligible_count": len(splits[split]),
         "catalog_size": len(model.index.item_ids),
         "candidate_universe": "all_wands_products",
+        "rerank_pool": "Same Hybrid RRF Top100; full-catalog retrieval" if algorithm == "ltr" else None,
         "metrics": {key: float(frame[key].mean()) for key in metric_keys},
         "catalog_coverage_at_10": len(top_items) / len(model.index.item_ids),
         "unique_top10_items": len(top_items),

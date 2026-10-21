@@ -40,6 +40,7 @@ def create_app(root: Path = ROOT, enable_dense: bool = True):
                 **states,
                 "search_algorithms": app.state.search.algorithms if app.state.search else [],
                 "dense_ready": app.state.search is not None and app.state.search.dense is not None,
+                "ltr_ready": app.state.search is not None and app.state.search.ranker is not None,
                 "versions": {
                     "search": app.state.search.version if app.state.search else None,
                     "rec": app.state.rec.version if app.state.rec else None,
@@ -60,7 +61,8 @@ def create_app(root: Path = ROOT, enable_dense: bool = True):
         if pipeline is None:
             raise HTTPException(503, "Search index missing; run scripts/build_search.py")
         if request.algorithm not in pipeline.algorithms:
-            raise HTTPException(503, f"{request.algorithm} unavailable; run scripts/build_dense.py")
+            script = "train_ranker.py" if request.algorithm == "ltr" else "build_dense.py"
+            raise HTTPException(503, f"{request.algorithm} unavailable; run scripts/{script}")
         started = perf_counter()
         candidates = pipeline.search(request.query, request.top_k, request.algorithm)
         results = []

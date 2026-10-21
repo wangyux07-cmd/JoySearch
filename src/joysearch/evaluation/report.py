@@ -26,6 +26,7 @@ def code_manifest(root):
             *root.glob("frontend/*.ts"),
             root / "requirements-lock.txt",
             root / "requirements-dense-lock.txt",
+            root / "requirements-rank-lock.txt",
             root / "pyproject.toml",
         ]
     )
@@ -99,6 +100,9 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
         ),
     }
     artifact_directories = []
+    if "ltr" in search_algorithms:
+        artifact_directories.append(root / "artifacts/search_ltr")
+        config["packages"]["lightgbm"] = importlib.metadata.version("lightgbm")
     if pipeline in ["all", "search"]:
         artifact_directories.append(root / "artifacts/search")
         if any(algorithm != "bm25" for algorithm in search_algorithms):
@@ -111,7 +115,10 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
         p.relative_to(root).as_posix(): file_hash(p)
         for directory in artifact_directories
         for p in sorted(directory.rglob("*"))
-        if p.is_file() and ".cache" not in p.parts and p.name != "build_state.json"
+        if p.is_file()
+        and ".cache" not in p.parts
+        and p.name
+        not in ["build_state.json", "candidate_cache.json", "train.parquet", "validation.parquet"]
     }
     if any(algorithm != "bm25" for algorithm in search_algorithms):
         config["packages"].update(
@@ -225,6 +232,23 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
                     else "Same users, full train catalog, train-positive exclusion",
                 }
             )
+    if search["status"] == "completed" and {"hybrid", "ltr"} <= set(search_algorithms):
+        for key, baseline in search["algorithms"]["hybrid"]["metrics"].items():
+            candidate = search["algorithms"]["ltr"]["metrics"][key]
+            comparisons.append(
+                {
+                    "dataset": "wands_search",
+                    "split": search_split,
+                    "metric": key,
+                    "baseline_algorithm": "hybrid",
+                    "candidate_algorithm": "ltr",
+                    "baseline_value": baseline,
+                    "candidate_value": candidate,
+                    "delta": candidate - baseline,
+                    "delta_pct": 100 * (candidate - baseline) / abs(baseline) if baseline else None,
+                    "comparability_note": "Same frozen queries, qrels and exact RRF Top100 pool; reranking only",
+                }
+            )
     columns = [
         "dataset",
         "split",
@@ -297,14 +321,14 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
             "",
             "搜索对照：同一固定查询与完整商品库，正负差值均保存于 comparisons.csv。",
             "MiniLM 固定 revision、128 tokens、384维归一化向量；RRF k=60，每路 Top100，等权。",
-            "配置在 test 前固定；validation 只用于验证协议，未据 test 调参。",
+            "召回配置固定；LTR 仅用 train 标注拟合、validation judged-only NDCG@10 早停，test 不调参。",
         ]
     if search["status"] == "completed" and len(search_algorithms) > 1:
-        lines += ["", "| 搜索候选 | 指标 | 相对 BM25 绝对差 | 相对变化 % |", "|---|---|---|---|"]
+        lines += ["", "| 搜索候选 / 基线 | 指标 | 绝对差 | 相对变化 % |", "|---|---|---|---|"]
         for row in comparisons:
             if row["dataset"] == "wands_search":
                 lines.append(
-                    f"| {row['candidate_algorithm']} | {row['metric']} | {row['delta']:+.8f} | {row['delta_pct']} |"
+                    f"| {row['candidate_algorithm']} / {row['baseline_algorithm']} | {row['metric']} | {row['delta']:+.8f} | {row['delta_pct']} |"
                 )
     lines += [
         "",

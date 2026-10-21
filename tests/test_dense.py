@@ -88,7 +88,7 @@ def test_real_dense_and_hybrid_api():
     with TestClient(create_app()) as client:
         readiness = client.get("/readyz").json()
         assert readiness["dense_ready"]
-        assert readiness["search_algorithms"] == ["bm25", "dense", "hybrid"]
+        assert readiness["search_algorithms"][:3] == ["bm25", "dense", "hybrid"]
         for algorithm in ["dense", "hybrid"]:
             response = client.post(
                 "/api/v1/search",

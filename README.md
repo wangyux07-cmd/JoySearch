@@ -2,7 +2,7 @@
 
 Product search and personalised recommendations with FastAPI, React and reproducible offline evaluation.
 
-- **Search:** BM25, MiniLM semantic retrieval and RRF hybrid ranking over WANDS.
+- **Search:** BM25, MiniLM semantic retrieval, RRF fusion and LambdaMART reranking over WANDS.
 - **Recommendations:** Popularity and sparse ItemCF over Amazon Baby Products ratings.
 - **Evaluation:** fixed held-out splits, algorithm comparisons, latency measurements and versioned reports.
 
@@ -68,6 +68,21 @@ python scripts/evaluate.py --pipeline search --search-algorithms bm25 dense hybr
 python scripts/evaluate.py --pipeline all --search-algorithms bm25 dense hybrid
 ```
 
+## Learning to rank
+
+After building the semantic index, install LightGBM and train from the existing local data:
+
+```powershell
+python -m pip install -r requirements-rank-lock.txt
+python scripts/train_ranker.py
+python scripts/evaluate.py --pipeline search --search-algorithms bm25 dense hybrid ltr --search-split validation
+python scripts/evaluate.py --pipeline all --search-algorithms bm25 dense hybrid ltr
+```
+
+LambdaMART reranks Hybrid's fixed Top100 pool using channel scores/ranks, lexical overlap and catalog features. The same feature extractor serves training and requests. Fit on judged retrieved candidates from training queries only, select the iteration by validation NDCG@10, then evaluate every candidate on the fixed test queries. Unjudged candidates are excluded from fitting, and known positives are never inserted into the pool.
+
+The fixed configuration in `configs/ranker.json` uses gains `[0,1,3]`, 15 leaves, learning rate 0.05 and at most 300 trees. Validation early stopping selected 29 trees. Training used 20,125 judged candidate pairs from 284 of 288 training queries; validation used 6,534 pairs from 95 of 96 queries. Queries without judged candidates remain in full-cohort evaluation. Completed matching artifacts are reused. Restart the API to enable **LambdaMART** in the selector; the request identifier is `ltr`.
+
 ## Results
 
 Evaluation: 96 held-out WANDS queries against 42,994 products; 10,000 Amazon users against the complete 16,574-item training catalog.
@@ -77,8 +92,9 @@ Evaluation: 96 held-out WANDS queries against 42,994 products; 10,000 Amazon use
 | BM25 | 0.624031 | 0.782217 | 0.373704 | 0.794792 |
 | Dense | 0.645170 | 0.834821 | 0.368893 | 0.825000 |
 | Hybrid | 0.687759 | 0.866464 | 0.392750 | 0.857292 |
+| LambdaMART | 0.628400 | 0.830481 | 0.392750 | 0.764583 |
 
-Hybrid changes NDCG@10 by **+0.063728 (+10.21%)** relative to BM25 on this fixed test set. Dense has higher NDCG but slightly lower JudgedRecall@100 than BM25. Parameters were fixed before this comparison.
+Hybrid changes NDCG@10 by **+0.063728 (+10.21%)** relative to BM25 on this fixed test set. Dense has higher NDCG but slightly lower JudgedRecall@100 than BM25. LambdaMART changes NDCG@10 by **-0.059359 (-8.63%)** relative to Hybrid. Its lower JudgmentCoverage@10 accompanies more unjudged Top10 results. The supervised model remains an optional comparison; Hybrid has the highest measured NDCG@10. Retrieval settings and the ranker configuration were fixed before test evaluation; only the boosting iteration used validation. This is a repeated fixed-test regression comparison, not a new untouched test set.
 
 | Recommendation algorithm | HR@10 | NDCG@10 | CatalogCoverage@10 |
 |---|---:|---:|---:|
@@ -88,13 +104,14 @@ Hybrid changes NDCG@10 by **+0.063728 (+10.21%)** relative to BM25 on this fixed
 ItemCF trades lower hit rate for broader catalog coverage in this experiment. Its HR@10 difference from Popularity is −0.0117; NDCG@10 differs by −0.005098.
 
 
-Warm CPU inference over the same 96 test queries:
+Warm CPU inference over the same 96 test queries on an Intel Core i5-1240P (four encoder threads, sequential requests):
 
 | Algorithm | p50 (ms) | p95 (ms) |
 |---|---:|---:|
-| bm25 | 1.150 | 3.622 |
-| dense | 26.148 | 29.672 |
-| hybrid | 40.703 | 52.189 |
+| bm25 | 1.753 | 5.534 |
+| dense | 34.040 | 45.833 |
+| hybrid | 37.427 | 45.613 |
+| ltr | 44.351 | 51.750 |
 
 Each evaluation generates a local `reports/run_<UTC>_<id>/` directory with metrics, paired comparisons, per-query/user diagnostics, latency measurements and source/configuration hashes. `reports/latest.json` identifies the latest complete run. Evaluation outputs are generated locally and excluded from Git.
 
@@ -117,7 +134,7 @@ python scripts/evaluate.py --pipeline recommendation
 | Module | Responsibility |
 |---|---|
 | `data` | Schema validation, deduplication, deterministic splits and provenance |
-| `search` | Retrieval indexes, ranking fusion and `SearchPipeline` |
+| `search` | Retrieval indexes, fusion, shared features, offline ranker training and `SearchPipeline` |
 | `recommendation` | Train-only Popularity, sparse TopN ItemCF and `RecPipeline` |
 | `evaluation` | Pure metric functions, independent evaluators and reports |
 | `api` | Typed requests, model lifecycle, readiness and anonymous user mapping |
@@ -166,6 +183,7 @@ For a short demo: search `salon chair`; compare ItemCF for the first two anonymo
 
 - [WANDS](https://github.com/wayfair/WANDS), MIT licence. Chen et al., *WANDS: Dataset for Product Search Relevance Assessment*, ECIR 2022.
 - [MiniLM model card](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), Apache-2.0. The fixed revision is recorded in `configs/dense.json`.
+- [LightGBM Ranker](https://lightgbm.readthedocs.io/en/stable/pythonapi/lightgbm.LGBMRanker.html), used for LambdaMART fitting and native model persistence.
 - [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/) and its [5-core rating-only files](https://amazon-reviews-2023.github.io/data_processing/5core.html). Hou et al., *Bridging Language and Items for Retrieval and Recommendation*, 2024. Dataset use and redistribution follow the source terms.
 
 Raw data, prepared interactions, model weights, user mappings and local caches stay outside Git.
