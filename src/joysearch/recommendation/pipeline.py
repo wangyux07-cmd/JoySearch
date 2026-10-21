@@ -11,11 +11,16 @@ from joysearch.recommendation.popularity import Popularity
 class RecPipeline:
     version = "rec-v1"
 
-    def __init__(self, popularity, similarity, aliases, manifest):
+    def __init__(self, popularity, similarity, aliases, manifest, two_tower=None):
         self.popularity = popularity
         self.itemcf = ItemCF(similarity, popularity)
         self.aliases = aliases
         self.manifest = manifest
+        self.two_tower = two_tower
+        self.algorithms = ["popularity", "itemcf"] + (["two_tower"] if two_tower else [])
+        self.versions = {"popularity": self.version, "itemcf": self.version}
+        if two_tower:
+            self.versions["two_tower"] = two_tower.version
 
     @classmethod
     def build(cls, train, data_manifest=None, top_n=100, shrinkage=10):
@@ -64,7 +69,7 @@ class RecPipeline:
         write_json(output / "manifest.json", self.manifest)
 
     @classmethod
-    def load(cls, output):
+    def load(cls, output, enable_two_tower=True):
         manifest = read_json(output / "manifest.json")
         if manifest["version"] != cls.version or manifest["catalog_id"] != "amazon_baby_rec":
             raise ValueError(f"Incompatible recommendation artifact: {output}")
@@ -73,7 +78,13 @@ class RecPipeline:
         if similarity.shape != (len(model["items"]), len(model["items"])):
             raise ValueError(f"Recommendation artifact dimensions disagree: {output}")
         popularity = Popularity(model["items"], model["counts"], model["histories"])
-        return cls(popularity, similarity, model["aliases"], manifest)
+        two_tower = None
+        path = output.parent / "recommendation_two_tower"
+        if enable_two_tower and (path / "manifest.json").exists():
+            from joysearch.recommendation.two_tower import TwoTower
+
+            two_tower = TwoTower.load(path, popularity, manifest)
+        return cls(popularity, similarity, model["aliases"], manifest, two_tower)
 
     def recommend(self, context, k=10, algorithm="itemcf"):
         if algorithm == "popularity":
@@ -81,6 +92,8 @@ class RecPipeline:
             return self.popularity.recommend(context, k), reason
         if algorithm == "itemcf":
             return self.itemcf.recommend(context, k)
+        if algorithm == "two_tower" and self.two_tower is not None:
+            return self.two_tower.recommend(context, k)
         raise ValueError(f"Unknown recommendation algorithm: {algorithm}")
 
 

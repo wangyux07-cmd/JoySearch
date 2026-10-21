@@ -22,6 +22,15 @@ if __name__ == "__main__":
         choices=["bm25", "dense", "hybrid", "ltr"],
         default=default_algorithms,
     )
+    default_rec = ["popularity", "itemcf"]
+    if (ROOT / "artifacts/recommendation_two_tower/manifest.json").exists():
+        default_rec.append("two_tower")
+    parser.add_argument(
+        "--recommendation-algorithms",
+        nargs="+",
+        choices=["popularity", "itemcf", "two_tower"],
+        default=default_rec,
+    )
     args = parser.parse_args()
     folder = ROOT / "reports/quality" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     folder.mkdir(parents=True)
@@ -37,6 +46,8 @@ if __name__ == "__main__":
                 "all",
                 "--search-algorithms",
                 *args.search_algorithms,
+                "--recommendation-algorithms",
+                *args.recommendation_algorithms,
             ],
             ROOT,
             "real_evaluations",

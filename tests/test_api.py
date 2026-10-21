@@ -44,7 +44,7 @@ def test_recommendation_api_and_unready(tmp_path):
         cold = client.post("/api/v1/recommend", json={"user_id": "unknown"}).json()
         assert cold["fallback_reason"] == "cold_user"
         assert all(c["sources"] == ["popularity"] for c in cold["results"])
-        assert client.post("/api/v1/recommend", json={"algorithm": "two_tower"}).status_code == 422
+        assert client.post("/api/v1/recommend", json={"algorithm": "unknown"}).status_code == 422
         assert (
             client.post("/api/v1/recommend", json={"catalog_id": "wands_search"}).status_code == 422
         )
@@ -61,3 +61,13 @@ def test_disabled_dense_preserves_bm25():
             )
             assert response.status_code == 503
         assert client.post("/api/v1/search", json={"query": "chair"}).status_code == 200
+
+
+def test_disabled_two_tower_preserves_recommendation_baselines():
+    with TestClient(create_app(enable_dense=False, enable_two_tower=False)) as client:
+        ready = client.get("/readyz").json()
+        assert ready["rec_ready"] and not ready["two_tower_ready"]
+        assert ready["recommendation_algorithms"] == ["popularity", "itemcf"]
+        response = client.post("/api/v1/recommend", json={"algorithm": "two_tower"})
+        assert response.status_code == 503 and "train_two_tower.py" in response.json()["detail"]
+        assert client.post("/api/v1/recommend", json={"algorithm": "itemcf"}).status_code == 200

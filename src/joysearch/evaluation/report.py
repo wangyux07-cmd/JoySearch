@@ -37,9 +37,30 @@ def code_manifest(root):
     return {"sha256": digest, "files": hashes}
 
 
-def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
+def run(
+    root,
+    pipeline="all",
+    search_algorithms=("bm25",),
+    search_split="test",
+    rec_algorithms=None,
+    rec_split="test",
+):
     if search_split != "test" and pipeline != "search":
         raise ValueError("Validation split is available only with --pipeline search")
+    if rec_split != "test" and pipeline != "recommendation":
+        raise ValueError("Recommendation validation requires --pipeline recommendation")
+    if rec_algorithms is None:
+        rec_algorithms = ["popularity", "itemcf"]
+        if (root / "artifacts/recommendation_two_tower/manifest.json").exists():
+            rec_algorithms.append("two_tower")
+    if (
+        not rec_algorithms
+        or rec_algorithms[0] != "popularity"
+        or len(set(rec_algorithms)) != len(rec_algorithms)
+    ):
+        raise ValueError(
+            "Recommendation comparison must start with popularity and contain no duplicates"
+        )
     if (
         not search_algorithms
         or search_algorithms[0] != "bm25"
@@ -61,6 +82,8 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
         "pipeline": pipeline,
         "search_algorithms": list(search_algorithms),
         "search_split": search_split,
+        "recommendation_algorithms": list(rec_algorithms),
+        "recommendation_split": rec_split,
         "timestamp_utc": datetime.now(UTC).isoformat(),
         "python": sys.version,
         "executable": sys.executable,
@@ -70,7 +93,7 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
         "git_sha_reason": None if git.returncode == 0 else "Repository has no HEAD commit",
         "git_status": status.stdout.splitlines(),
         "code": code_manifest(root),
-        "test_reuse": repeated and search_split == "test",
+        "test_reuse": repeated and search_split == "test" and rec_split == "test",
         "test_reuse_note": "Regression reproducibility rerun; not untouched generalisation"
         if repeated
         else "First fixed-parameter test evaluation; no test-based model selection",
@@ -97,6 +120,10 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
             + " ".join(search_algorithms)
             + " --search-split "
             + search_split
+            + " --recommendation-algorithms "
+            + " ".join(rec_algorithms)
+            + " --recommendation-split "
+            + rec_split
         ),
     }
     artifact_directories = []
@@ -111,6 +138,9 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
             artifact_directories.append(root / dense_manifest["model_path"])
     if pipeline in ["all", "recommendation"]:
         artifact_directories.append(root / "artifacts/recommendation")
+        if "two_tower" in rec_algorithms:
+            artifact_directories.append(root / "artifacts/recommendation_two_tower")
+            config["packages"]["torch"] = importlib.metadata.version("torch")
     config["model_artifact_sha256"] = {
         p.relative_to(root).as_posix(): file_hash(p)
         for directory in artifact_directories
@@ -118,7 +148,14 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
         if p.is_file()
         and ".cache" not in p.parts
         and p.name
-        not in ["build_state.json", "candidate_cache.json", "train.parquet", "validation.parquet"]
+        not in [
+            "build_state.json",
+            "candidate_cache.json",
+            "train.parquet",
+            "validation.parquet",
+            "best_state.pt",
+            "training_progress.json",
+        ]
     }
     if any(algorithm != "bm25" for algorithm in search_algorithms):
         config["packages"].update(
@@ -133,10 +170,8 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
                 ]
             }
         )
-    if search_split == "validation":
-        config["test_reuse_note"] = (
-            "Validation-only protocol check; fixed parameters, no hyperparameter search"
-        )
+    if search_split == "validation" or rec_split == "validation":
+        config["test_reuse_note"] = "Validation-only comparison; no test cohort metrics in this run"
     data = {
         name: read_json(root / f"data/processed/{directory}/manifest.json")
         for name, directory in [("search", "wands"), ("recommendation", "amazon")]
@@ -179,7 +214,10 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
         pd.concat(frames, ignore_index=True).to_csv(folder / "search_per_query.csv", index=False)
     if pipeline in ["all", "recommendation"]:
         rec, latency["recommendation"], rows = rec_eval.evaluate(
-            root / "data/processed/amazon", root / "artifacts/recommendation"
+            root / "data/processed/amazon",
+            root / "artifacts/recommendation",
+            rec_algorithms,
+            rec_split,
         )
         rows.to_csv(folder / "recommendation_per_user.csv", index=False)
     if search["status"] == "completed":
@@ -213,25 +251,29 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
                     }
                 )
     if rec["status"] == "completed":
-        for key in ["hr_at_10", "ndcg_at_10", "catalog_coverage_at_10", "fallback_rate"]:
-            baseline, candidate = [rec["algorithms"][a][key] for a in ["popularity", "itemcf"]]
-            comparisons.append(
-                {
-                    "dataset": "amazon_baby_rec",
-                    "split": "test",
-                    "metric": key,
-                    "baseline_algorithm": "popularity",
-                    "candidate_algorithm": "itemcf",
-                    "baseline_value": baseline,
-                    "candidate_value": candidate,
-                    "delta": candidate - baseline,
-                    "delta_pct": 100 * (candidate - baseline) / abs(baseline) if baseline else None,
-                    "comparability_note": "Same users, train universe, seen filter and metric; "
-                    "zero baseline makes relative delta undefined"
-                    if baseline == 0
-                    else "Same users, full train catalog, train-positive exclusion",
-                }
-            )
+        pairs = [("popularity", a) for a in rec_algorithms[1:]]
+        if {"itemcf", "two_tower"} <= set(rec_algorithms):
+            pairs.append(("itemcf", "two_tower"))
+        for baseline_algorithm, candidate_algorithm in pairs:
+            for key in ["hr_at_10", "ndcg_at_10", "catalog_coverage_at_10", "fallback_rate"]:
+                baseline = rec["algorithms"][baseline_algorithm][key]
+                candidate = rec["algorithms"][candidate_algorithm][key]
+                comparisons.append(
+                    {
+                        "dataset": "amazon_baby_rec",
+                        "split": rec_split,
+                        "metric": key,
+                        "baseline_algorithm": baseline_algorithm,
+                        "candidate_algorithm": candidate_algorithm,
+                        "baseline_value": baseline,
+                        "candidate_value": candidate,
+                        "delta": candidate - baseline,
+                        "delta_pct": 100 * (candidate - baseline) / abs(baseline)
+                        if baseline
+                        else None,
+                        "comparability_note": "Same frozen users, full train catalog and train-positive exclusion; unavailable targets retained as misses",
+                    }
+                )
     if search["status"] == "completed" and {"hybrid", "ltr"} <= set(search_algorithms):
         for key, baseline in search["algorithms"]["hybrid"]["metrics"].items():
             candidate = search["algorithms"]["ltr"]["metrics"][key]
@@ -304,15 +346,15 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
         lines += [
             "",
             (
-                f"测试目标不在训练库：{rec['unavailable_test_item_count']}/{rec['users_evaluated']}，"
+                f"{rec_split} 目标不在训练库：{rec['unavailable_target_count']}/{rec['users_evaluated']}，"
                 "全部保留在指标分母。"
             ),
             "",
-            "| ItemCF − Popularity | 绝对差值 | 相对变化 % |",
-            "|---|---|---|",
+            "| 推荐候选 / 基线 | 指标 | 绝对差值 | 相对变化 % |",
+            "|---|---|---|---|",
         ]
         lines.extend(
-            f"| {r['metric']} | {r['delta']:+.8f} | {r['delta_pct']} |"
+            f"| {r['candidate_algorithm']} / {r['baseline_algorithm']} | {r['metric']} | {r['delta']:+.8f} | {r['delta_pct']} |"
             for r in comparisons
             if r["dataset"] == "amazon_baby_rec"
         )
@@ -356,7 +398,7 @@ def run(root, pipeline="all", search_algorithms=("bm25",), search_split="test"):
         "```",
     ]
     (folder / "summary.md").write_text("\n".join(lines), encoding="utf-8")
-    if pipeline == "all" and search_split == "test":
+    if pipeline == "all" and search_split == "test" and rec_split == "test":
         write_json(root / "reports/latest.json", {"status": "verified", "run_id": run_id})
     print(f"Report: {folder}")
     if search["status"] == "completed":

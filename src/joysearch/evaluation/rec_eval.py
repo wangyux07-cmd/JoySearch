@@ -8,14 +8,14 @@ from joysearch.evaluation.search_eval import latency_summary
 from joysearch.recommendation.pipeline import RecPipeline
 
 
-def evaluate(source, artifact):
+def evaluate(source, artifact, algorithms=("popularity", "itemcf"), split="test"):
     started = time.perf_counter()
-    model = RecPipeline.load(artifact)
+    model = RecPipeline.load(artifact, enable_two_tower="two_tower" in algorithms)
     manifest = read_json(source / "manifest.json")
     if model.manifest["data_manifest"]["split_sha256"] != manifest["split_sha256"]:
         raise ValueError("Recommendation model/data split mismatch; rebuild model")
     events = pd.read_parquet(source / "events.parquet")
-    test = events[events.split == "test"].sort_values("user_id")
+    test = events[events.split == split].sort_values("user_id")
     train = events[events.split == "train"]
     expected = {
         user: {str(item) for item in group.parent_asin} for user, group in train.groupby("user_id")
@@ -31,8 +31,10 @@ def evaluate(source, artifact):
     train_items = set(model.popularity.items)
     unseen = int((~test.parent_asin.isin(train_items)).sum())
     aliases = {user: alias for alias, user in model.aliases.items()}
-    algorithms, latency, rows = {}, {}, []
-    for algorithm in ["popularity", "itemcf"]:
+    algorithm_reports, latency, rows = {}, {}, []
+    for algorithm in algorithms:
+        if algorithm not in model.algorithms:
+            raise ValueError(f"Requested recommendation algorithm unavailable: {algorithm}")
         for user in test.user_id.iloc[:5]:
             model.recommend(RecommendationContext(user), 10, algorithm)
         hits, discounted, fallbacks, recommended, times = 0, 0.0, 0, set(), []
@@ -59,7 +61,7 @@ def evaluate(source, artifact):
                     "fallback_reason": reason,
                 }
             )
-        algorithms[algorithm] = {
+        algorithm_reports[algorithm] = {
             "hr_at_10": hits / len(test),
             "ndcg_at_10": discounted / len(test),
             "catalog_coverage_at_10": len(recommended) / len(train_items),
@@ -73,7 +75,7 @@ def evaluate(source, artifact):
     report = {
         "status": "completed",
         "dataset": "amazon_baby_rec",
-        "split": "test",
+        "split": split,
         "seed": manifest["seed"],
         "k": 10,
         "sample_count": len(test),
@@ -84,15 +86,20 @@ def evaluate(source, artifact):
         "exclude_seen": "train positives",
         "unavailable_test_item_count": unseen,
         "unavailable_test_item_rate": unseen / len(test),
-        "algorithms": algorithms,
+        "unavailable_target_count": unseen,
+        "unavailable_target_rate": unseen / len(test),
+        "algorithms": algorithm_reports,
         "model_version": model.version,
-        "config": model.manifest,
+        "config": {
+            "baseline": model.manifest,
+            "two_tower": model.two_tower.manifest if "two_tower" in algorithms else None,
+        },
         "duration_seconds": time.perf_counter() - started,
         "limitations": [
             "rating >= 4 is positive rating preference, not clicks/purchases",
             "Deterministic sampled user cohort; complete histories retained",
             "Per-user leave-last-two-out is not global temporal evaluation",
-            "Unavailable targets count as misses; no negative sampling",
+            "Unavailable targets count as misses; full-catalog evaluation without sampled negatives",
             "No recommendation metadata; separate from WANDS catalog",
         ],
     }

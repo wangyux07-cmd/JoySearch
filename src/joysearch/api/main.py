@@ -12,7 +12,7 @@ from joysearch.recommendation.pipeline import RecPipeline
 from joysearch.search.pipeline import SearchPipeline
 
 
-def create_app(root: Path = ROOT, enable_dense: bool = True):
+def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: bool = True):
     @asynccontextmanager
     async def lifespan(app):
         search_path = root / "artifacts/search"
@@ -20,7 +20,9 @@ def create_app(root: Path = ROOT, enable_dense: bool = True):
             SearchPipeline.load(root, enable_dense=enable_dense) if search_path.exists() else None
         )
         rec_path = root / "artifacts/recommendation"
-        app.state.rec = RecPipeline.load(rec_path) if rec_path.exists() else None
+        app.state.rec = (
+            RecPipeline.load(rec_path, enable_two_tower=enable_two_tower) if rec_path.exists() else None
+        )
         yield
 
     app = FastAPI(title="JoySearch", lifespan=lifespan)
@@ -39,6 +41,8 @@ def create_app(root: Path = ROOT, enable_dense: bool = True):
             {
                 **states,
                 "search_algorithms": app.state.search.algorithms if app.state.search else [],
+                "recommendation_algorithms": app.state.rec.algorithms if app.state.rec else [],
+                "two_tower_ready": app.state.rec is not None and app.state.rec.two_tower is not None,
                 "dense_ready": app.state.search is not None and app.state.search.dense is not None,
                 "ltr_ready": app.state.search is not None and app.state.search.ranker is not None,
                 "versions": {
@@ -107,6 +111,8 @@ def create_app(root: Path = ROOT, enable_dense: bool = True):
         pipeline = app.state.rec
         if pipeline is None:
             raise HTTPException(503, "Recommendation model missing; run scripts/build_rec.py")
+        if request.algorithm not in pipeline.algorithms:
+            raise HTTPException(503, "two_tower unavailable; run scripts/train_two_tower.py")
         started = perf_counter()
         user = pipeline.aliases.get(request.user_id)
         candidates, reason = pipeline.recommend(
@@ -117,7 +123,7 @@ def create_app(root: Path = ROOT, enable_dense: bool = True):
         return {
             "catalog_id": request.catalog_id,
             "algorithm": request.algorithm,
-            "model_version": pipeline.version,
+            "model_version": pipeline.versions[request.algorithm],
             "results": [
                 {
                     "catalog_id": c.catalog_id,

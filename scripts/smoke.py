@@ -53,6 +53,25 @@ def smoke(base_url=None):
             assert rec.json()["catalog_id"] == "amazon_baby_rec"
             rankings.append([item["item_id"] for item in rec.json()["results"]])
         assert rankings[0] != rankings[1]
+        if ready.json()["two_tower_ready"]:
+            tower_rankings = []
+            for user in users[:2]:
+                response = client.post(
+                    "/api/v1/recommend",
+                    json={
+                        "user_id": user["user_id"],
+                        "algorithm": "two_tower",
+                    },
+                )
+                assert response.status_code == 200, response.text
+                result = response.json()
+                assert result["model_version"] == "two-tower-v1"
+                assert len(result["results"]) == 10
+                assert all(r["sources"] == ["two_tower"] for r in result["results"])
+                tower_rankings.append([r["item_id"] for r in result["results"]])
+            assert tower_rankings[0] != tower_rankings[1]
+            tower_cold = client.post("/api/v1/recommend", json={"algorithm": "two_tower"}).json()
+            assert tower_cold["fallback_reason"] == "cold_user"
         cold = client.post("/api/v1/recommend", json={"user_id": "unknown"}).json()
         assert cold["fallback_reason"] == "cold_user"
         assert (

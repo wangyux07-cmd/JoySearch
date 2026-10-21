@@ -24,7 +24,7 @@ class RecRequest(BaseModel):
     catalog_id: Literal["amazon_baby_rec"] = "amazon_baby_rec"
     user_id: str | None = Field(default=None, max_length=150)
     top_k: int = Field(default=10, ge=1, le=100)
-    algorithm: Literal["popularity", "itemcf"] = "itemcf"
+    algorithm: Literal["popularity", "itemcf", "two_tower"] = "itemcf"
     exclude_seen: bool = True
 
 

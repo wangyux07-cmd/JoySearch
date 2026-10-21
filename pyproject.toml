@@ -12,6 +12,7 @@ dependencies = ["fastapi", "uvicorn", "pandas", "numpy", "scipy", "pyarrow"]
 dev = ["pytest", "ruff", "httpx"]
 dense = ["torch==2.9.1+cpu", "sentence-transformers==5.1.2", "transformers==4.57.1"]
 rank = ["lightgbm==4.6.0"]
+recommendation = ["torch==2.9.1+cpu"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -3,7 +3,7 @@
 Product search and personalised recommendations with FastAPI, React and reproducible offline evaluation.
 
 - **Search:** BM25, MiniLM semantic retrieval, RRF fusion and LambdaMART reranking over WANDS.
-- **Recommendations:** Popularity and sparse ItemCF over Amazon Baby Products ratings.
+- **Recommendations:** Popularity, sparse ItemCF and history-based Two-Tower retrieval over Amazon Baby Products ratings.
 - **Evaluation:** fixed held-out splits, algorithm comparisons, latency measurements and versioned reports.
 
 ## Run locally
@@ -83,6 +83,23 @@ LambdaMART reranks Hybrid's fixed Top100 pool using channel scores/ranks, lexica
 
 The fixed configuration in `configs/ranker.json` uses gains `[0,1,3]`, 15 leaves, learning rate 0.05 and at most 300 trees. Validation early stopping selected 29 trees. Training used 20,125 judged candidate pairs from 284 of 288 training queries; validation used 6,534 pairs from 95 of 96 queries. Queries without judged candidates remain in full-cohort evaluation. Completed matching artifacts are reused. Restart the API to enable **LambdaMART** in the selector; the request identifier is `ltr`.
 
+## Two-Tower recommendations
+
+Use the CPU PyTorch installation from semantic search, or install the pinned CPU package in the same environment:
+
+```powershell
+python -m pip install "torch==2.9.1+cpu" --index-url https://download.pytorch.org/whl/cpu
+python scripts/train_two_tower.py
+python scripts/evaluate.py --pipeline recommendation --recommendation-algorithms popularity itemcf two_tower --recommendation-split validation
+python scripts/evaluate.py --pipeline all --search-algorithms bm25 dense hybrid ltr --recommendation-algorithms popularity itemcf two_tower
+```
+
+The user tower mean-pools learned context embeddings from up to 50 recent training items and projects them through an MLP. The item tower projects learned item embeddings into the same normalized 32-dimensional space. Scores are vector dot products over the full training catalog. There is no user-ID embedding. Unknown users receive the same explicit Popularity fallback.
+
+Training removes each positive target from its own input history, samples eight unobserved training items per pair and rejects all of the user's training positives. Held-out labels are used only for validation selection and final evaluation; unobserved samples may still be latent positives. Single-interaction training histories cannot form a target-excluded pair, so those 897 users are excluded from fitting and retained in validation/test. The model trains on 49,018 pairs from 9,103 users.
+
+`configs/two_tower.json` fixes one configuration. Full-catalog validation NDCG@10 selects epoch 5; training stops at epoch 9 with four-round patience, taking 21.53 seconds on CPU. Training progress and signatures are persisted locally. A completed matching model is reused; an interrupted training run restarts deterministically. Restart the API to enable **Two-Tower** in For You (`algorithm=two_tower`).
+
 ## Results
 
 Evaluation: 96 held-out WANDS queries against 42,994 products; 10,000 Amazon users against the complete 16,574-item training catalog.
@@ -100,18 +117,27 @@ Hybrid changes NDCG@10 by **+0.063728 (+10.21%)** relative to BM25 on this fixed
 |---|---:|---:|---:|
 | Popularity | 0.0163 | 0.007573 | 0.000905 |
 | ItemCF | 0.0046 | 0.002475 | 0.820261 |
+| Two-Tower | 0.0119 | 0.005768 | 0.012067 |
 
-ItemCF trades lower hit rate for broader catalog coverage in this experiment. Its HR@10 difference from Popularity is −0.0117; NDCG@10 differs by −0.005098.
+ItemCF trades lower hit rate for broader catalog coverage in this experiment. Its HR@10 difference from Popularity is −0.0117; NDCG@10 differs by −0.005098. Two-Tower improves HR@10 by +0.0073 and NDCG@10 by +0.003293 over ItemCF, with lower catalog coverage. Relative to Popularity, Two-Tower has HR@10 −0.0044 and NDCG@10 −0.001805. These are fixed-cohort offline comparisons; the default algorithm remains ItemCF.
 
 
 Warm CPU inference over the same 96 test queries on an Intel Core i5-1240P (four encoder threads, sequential requests):
 
 | Algorithm | p50 (ms) | p95 (ms) |
 |---|---:|---:|
-| bm25 | 1.753 | 5.534 |
-| dense | 34.040 | 45.833 |
-| hybrid | 37.427 | 45.613 |
-| ltr | 44.351 | 51.750 |
+| bm25 | 1.916 | 5.198 |
+| dense | 34.545 | 42.501 |
+| hybrid | 36.173 | 39.449 |
+| ltr | 44.227 | 49.111 |
+
+Warm recommendation inference over all 10,000 test users:
+
+| Algorithm | p50 (ms) | p95 (ms) |
+|---|---:|---:|
+| popularity | 0.026 | 0.042 |
+| itemcf | 1.571 | 2.660 |
+| two_tower | 2.875 | 4.000 |
 
 Each evaluation generates a local `reports/run_<UTC>_<id>/` directory with metrics, paired comparisons, per-query/user diagnostics, latency measurements and source/configuration hashes. `reports/latest.json` identifies the latest complete run. Evaluation outputs are generated locally and excluded from Git.
 
@@ -135,7 +161,7 @@ python scripts/evaluate.py --pipeline recommendation
 |---|---|
 | `data` | Schema validation, deduplication, deterministic splits and provenance |
 | `search` | Retrieval indexes, fusion, shared features, offline ranker training and `SearchPipeline` |
-| `recommendation` | Train-only Popularity, sparse TopN ItemCF and `RecPipeline` |
+| `recommendation` | Train-only Popularity, sparse ItemCF, history-based Two-Tower and `RecPipeline` |
 | `evaluation` | Pure metric functions, independent evaluators and reports |
 | `api` | Typed requests, model lifecycle, readiness and anonymous user mapping |
 | `frontend` | Search, For You and Evaluation views backed by the API |

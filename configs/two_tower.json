@@ -1,0 +1,15 @@
+{
+  "seed": 42,
+  "dimension": 32,
+  "max_history": 50,
+  "threads": 4,
+  "batch_size": 512,
+  "validation_batch_size": 128,
+  "negatives": 8,
+  "temperature": 0.1,
+  "learning_rate": 0.003,
+  "weight_decay": 0.00001,
+  "epochs": 30,
+  "patience": 4,
+  "parameter_policy": "Single fixed CPU configuration; select epoch by full-catalog validation NDCG@10; no test tuning"
+}

@@ -89,6 +89,7 @@ export default function App() {
   const [algorithm, setAlgorithm] = useState("itemcf");
   const [searchAlgorithm, setSearchAlgorithm] = useState("bm25");
   const [searchAlgorithms, setSearchAlgorithms] = useState<string[]>([]);
+  const [recAlgorithms, setRecAlgorithms] = useState<string[]>([]);
   const [capabilityError, setCapabilityError] = useState("");
   const [ranking, setRanking] = useState<Ranking | null>(null);
   const [busy, setBusy] = useState(false);
@@ -116,7 +117,10 @@ export default function App() {
       .then(async (response) => {
         if (![200, 503].includes(response.status))
           throw new Error(`HTTP ${response.status}`);
-        const data: { search_algorithms?: unknown } = await response.json();
+        const data: {
+          search_algorithms?: unknown;
+          recommendation_algorithms?: unknown;
+        } = await response.json();
         const algorithms = data.search_algorithms;
         if (
           !Array.isArray(algorithms) ||
@@ -127,6 +131,16 @@ export default function App() {
           throw new Error("后端搜索能力合同不匹配，请重启当前版本 API。");
         }
         setSearchAlgorithms(algorithms);
+        const recommendations = data.recommendation_algorithms;
+        if (
+          !Array.isArray(recommendations) ||
+          !recommendations.every((a) =>
+            ["popularity", "itemcf", "two_tower"].includes(a),
+          )
+        ) {
+          throw new Error("后端推荐能力合同不匹配，请重启当前版本 API。");
+        }
+        setRecAlgorithms(recommendations);
       })
       .catch((cause: Error) => {
         if (cause.name !== "AbortError") setCapabilityError(cause.message);
@@ -301,11 +315,26 @@ export default function App() {
                         value={algorithm}
                         onChange={(e) => setAlgorithm(e.target.value)}
                       >
-                        <option value="itemcf">ItemCF · 历史相似商品</option>
-                        <option value="popularity">
-                          Popularity · 训练集热门
-                        </option>
+                        {[
+                          ["itemcf", "ItemCF · 历史相似商品"],
+                          ["popularity", "Popularity · 训练集热门"],
+                          ["two_tower", "Two-Tower · 历史向量召回"],
+                        ].map(([value, label]) => (
+                          <option
+                            key={value}
+                            value={value}
+                            disabled={!recAlgorithms.includes(value)}
+                          >
+                            {label}
+                            {recAlgorithms.includes(value) ? "" : " · 未就绪"}
+                          </option>
+                        ))}
                       </select>
+                      {capabilityError && (
+                        <p className="error" role="alert">
+                          {capabilityError}
+                        </p>
+                      )}
                       <p className="helper">
                         排除训练历史中已评分为正向的商品。未知用户使用热门推荐。
                       </p>
@@ -315,6 +344,7 @@ export default function App() {
                     className="primary"
                     disabled={
                       busy ||
+                      (tab === "rec" && !recAlgorithms.includes(algorithm)) ||
                       (tab === "search" &&
                         (!query.trim() ||
                           !searchAlgorithms.includes(searchAlgorithm)))
@@ -474,7 +504,7 @@ export default function App() {
             )}
             {report?.recommendation && (
               <>
-                <h2>Amazon · Popularity 与 ItemCF</h2>
+                <h2>Amazon · 推荐算法对照</h2>
                 <p>
                   {report.recommendation.users_evaluated.toLocaleString()}{" "}
                   个相同测试用户 /{" "}
@@ -516,7 +546,7 @@ export default function App() {
                     report.recommendation.unavailable_test_item_rate * 100
                   ).toFixed(2)}
                   %，全部保留为
-                  misses。覆盖率高不代表命中率高；请对照两个算法的实测结果。
+                  misses。覆盖率高不代表命中率高；请对照各算法的实测结果。
                 </p>
               </>
             )}

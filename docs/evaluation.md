@@ -31,6 +31,12 @@ Deduplicate user/item events by latest timestamp, with highest rating breaking t
 
 Fit Popularity and ItemCF only from training positives. Both algorithms rank the complete train-item catalog and exclude the user's training positives. A test target missing from the training catalog remains a miss.
 
+Two-Tower uses the same cohort, candidate universe and exclusion rules. The user tower aggregates training-item context embeddings, with no user-ID embedding. A training pair removes its target before retaining the most recent 50 history items. Users with a single training positive cannot form such a pair; exclude them from fitting and record the count, while retaining them in validation/test inference. Uniform sampled negatives come only from the full training catalog and reject all of that user's training positives. Validation/test labels never determine negative sampling; unobserved draws may contain latent positives.
+
+Select the checkpoint solely by full-catalog validation NDCG@10 over all 10,000 frozen users, including unavailable targets as misses. Batch validation computes exact target ranks, using the same history encoding and all training-item vectors; item-ID order breaks score ties. Serving and headline evaluation rank the full catalog per user with training positives excluded. Dense allocations are bounded user-batch × catalog scores, never item × item. Report sampled-negative fitting separately from full-catalog evaluation.
+
+The fixed CPU configuration uses 32-dimensional normalized vectors, eight negatives per positive, pairwise logistic loss with temperature 0.1, Adam learning rate 0.003, at most 30 epochs and four-epoch patience. Save epoch losses, full-cohort validation metrics, selected epoch, build time, model checksums and exact data/configuration/source versions. Compare Two-Tower against both Popularity and ItemCF, including losses.
+
 - **HR@10:** mean test-target inclusion in Top10 over all sampled eligible users.
 - **NDCG@10:** mean `1/log2(rank+1)` for the single target when retrieved in Top10, otherwise zero.
 - **CatalogCoverage@10:** unique recommended training items divided by the training catalog size.
@@ -49,6 +55,9 @@ python scripts/evaluate.py --pipeline search --search-algorithms bm25 dense hybr
 python scripts/evaluate.py --pipeline all --search-algorithms bm25 dense hybrid
 python scripts/train_ranker.py
 python scripts/evaluate.py --pipeline all --search-algorithms bm25 dense hybrid ltr
+python scripts/train_two_tower.py
+python scripts/evaluate.py --pipeline recommendation --recommendation-algorithms popularity itemcf two_tower --recommendation-split validation
+python scripts/evaluate.py --pipeline all --search-algorithms bm25 dense hybrid ltr --recommendation-algorithms popularity itemcf two_tower
 ```
 
 Generated run directories stay under the Git-ignored `reports/` directory. A complete test run updates `reports/latest.json`; validation and single-domain runs preserve that pointer.
