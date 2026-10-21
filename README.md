@@ -6,11 +6,14 @@ Product search and personalised recommendations with FastAPI, React and reproduc
 - **Recommendations:** Popularity, sparse ItemCF, history-based Two-Tower and candidate allocation over Amazon Baby Products ratings.
 - **Traffic Lab:** cold-start slices and finite-arm policy simulation over explicit rating-target proxy rewards.
 - **Local LLM:** evidence-bound query rewriting and relevance-label diagnostics with cached CPU inference.
+- **Generative retrieval:** an offline GRU decoder, semantic product IDs and constrained beam experiments.
 - **Evaluation:** fixed held-out splits, algorithm comparisons, latency measurements and versioned reports.
 
 See the [local LLM workflow](docs/local_llm.md) for its bounded offline protocol.
 The [serving benchmark](docs/serving_performance.md) measures request stages,
 exact-scan equivalence and HTTP concurrency with a fixed worker budget.
+The [generative retrieval workflow](docs/generative_retrieval.md) covers neural ID
+generation, catalog constraints and held-out comparisons.
 
 ## Run locally
 
