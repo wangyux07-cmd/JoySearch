@@ -3,7 +3,8 @@
 Product search and personalised recommendations with FastAPI, React and reproducible offline evaluation.
 
 - **Search:** BM25, MiniLM semantic retrieval, RRF fusion, query understanding and LambdaMART reranking over WANDS.
-- **Recommendations:** Popularity, sparse ItemCF and history-based Two-Tower retrieval over Amazon Baby Products ratings.
+- **Recommendations:** Popularity, sparse ItemCF, history-based Two-Tower and candidate allocation over Amazon Baby Products ratings.
+- **Traffic Lab:** cold-start slices and finite-arm policy simulation over explicit rating-target proxy rewards.
 - **Evaluation:** fixed held-out splits, algorithm comparisons, latency measurements and versioned reports.
 
 ## Run locally
@@ -127,19 +128,22 @@ Warm CPU inference over the same 96 test queries on an Intel Core i5-1240P (four
 
 | Algorithm | p50 (ms) | p95 (ms) |
 |---|---:|---:|
-| bm25 | 1.071 | 3.605 |
-| dense | 21.677 | 25.103 |
-| hybrid | 23.247 | 27.705 |
-| ltr | 28.998 | 34.842 |
-| query_hybrid | 27.511 | 32.137 |
+| bm25 | 0.910 | 3.028 |
+| dense | 21.487 | 24.975 |
+| hybrid | 24.273 | 30.053 |
+| ltr | 30.625 | 36.320 |
+| query_hybrid | 29.332 | 35.051 |
 
 Warm recommendation inference over all 10,000 test users:
 
 | Algorithm | p50 (ms) | p95 (ms) |
 |---|---:|---:|
-| popularity | 0.020 | 0.023 |
-| itemcf | 1.057 | 1.178 |
-| two_tower | 1.826 | 2.140 |
+| popularity | 0.020 | 0.027 |
+| itemcf | 1.068 | 1.190 |
+| two_tower | 1.914 | 2.287 |
+| rrf | 4.775 | 7.948 |
+| quota | 5.442 | 9.365 |
+| adaptive_quota | 5.645 | 9.675 |
 
 Each evaluation generates a local `reports/run_<UTC>_<id>/` directory with metrics, paired comparisons, per-query/user diagnostics, latency measurements and source/configuration hashes. `reports/latest.json` identifies the latest complete run. Evaluation outputs are generated locally and excluded from Git.
 
@@ -188,6 +192,45 @@ The untruncated search union averages 159.32 candidates and has judged recall 0.
 
 Removing native ItemCF from the three-channel fusion changes CandidateHit@100 by +0.0117, to 0.0932. Its unique candidates do not translate into a fixed-budget gain in this experiment. Native ItemCF underfills B for 26.36% of users, averaging 85.64 candidates; the separate served baseline retains Popularity completion and reproduces HR@10=0.0046. All 2,023 unavailable test targets remain misses. The complete diagnostic run took 160.60 seconds on CPU and produced 57.10 MB of Parquet traces, without retraining or rebuilding indexes.
 
+## Allocation and cold-start analysis
+
+Recommendation candidates can use equal RRF, validation-selected fixed quotas or
+request-level quotas based on training-history length and native ItemCF support.
+Each channel retains Top100 after seen-item filtering; allocation reserves unique
+slots, reallocates shortfalls and ranks the final 100 candidates with rank-based
+scores. Debug responses retain requested/filled quotas and source attribution.
+
+On the same 10,000 test users and 16,574 training items:
+
+| Policy | CandidateHit@100 | HR@10 | NDCG@10 | CatalogCoverage@10 |
+|---|---:|---:|---:|---:|
+| Popularity | 0.1006 | 0.0163 | 0.007573 | 0.000905 |
+| Equal RRF | 0.0815 | 0.0158 | 0.007388 | 0.006758 |
+| Fixed quota `(40,20,40)` | 0.0854 | 0.0156 | 0.007231 | 0.004948 |
+| Adaptive `support_only` | 0.0878 | 0.0160 | 0.007470 | 0.004404 |
+
+Adaptive quotas add 0.0002 HR@10 over equal RRF and remain 0.0003 below
+Popularity. Fixed quotas lose HR and NDCG relative to equal RRF. TailListShare@10
+is zero for these fused policies: reserving candidate slots for ItemCF does not
+ensure that low-frequency candidates reach Top10. Native ItemCF has substantially
+broader coverage with lower hit rate. History and target-frequency slices retain
+all users, including the 2,023 unavailable targets. Unknown users explicitly receive
+train-only Popularity. The default remains ItemCF.
+
+Traffic Lab compares fixed, 10% fixed exploration and UCB1 over three quota arms.
+Across five declared seeds, test proxy hit rates are 0.01560, 0.01568 ± 0.00027
+and 0.01570 ± 0.00026 (mean ± sample standard deviation). UCB's 0.00010 mean
+difference is smaller than the seed-to-seed variation. The reward is held-out
+positive-rating target inclusion, with only selected-arm feedback updating UCB.
+These results are offline policy diagnostics, not exposure-log replay or online
+click uplift. Top10 low-frequency share remains zero in all three simulations.
+
+The [allocation protocol](docs/allocation.md) documents quota math, source-cache
+verification, complete validation/test commands and proxy-oracle regret. The UI
+reads saved reports and supports history/frequency slices. Candidate allocation
+uses all three channels and does not reduce retrieval computation. No new model
+training or catalog embedding build is needed for this stage.
+
 ## Query understanding
 
 Select **Query Hybrid** to retain the original BM25/Dense channels and add a
@@ -210,6 +253,7 @@ fixed-budget ablations, saved validation selection and reproducible commands.
 | `data` | Schema validation, deduplication, deterministic splits and provenance |
 | `search` | Retrieval indexes, fusion, shared features, offline ranker training and `SearchPipeline` |
 | `recommendation` | Train-only Popularity, sparse ItemCF, history-based Two-Tower and `RecPipeline` |
+| `traffic` | Finite-arm policies and offline rating-target proxy simulation |
 | `evaluation` | Pure metric functions, independent evaluators and reports |
 | `api` | Typed requests, model lifecycle, readiness and anonymous user mapping |
 | `frontend` | Search, For You and Evaluation views backed by the API |
@@ -227,6 +271,7 @@ BM25 uses sparse term weights, `k1=1.2`, `b=0.75`, Unicode-normalised lowercase 
 | `POST /api/v1/recommend` | Recommendations |
 | `GET /api/v1/users/demo` | Anonymous training-user aliases |
 | `GET /api/v1/reports/summary` | Stored evaluation results |
+| `GET /api/v1/reports/allocation` | Stored quota, cold-start slices and simulation results |
 
 ```json
 {"catalog_id":"wands_search","query":"salon chair","algorithm":"bm25","top_k":10}
@@ -251,7 +296,10 @@ npm.cmd run build
 
 With the API running, `python scripts/verify_release.py` records the full release checks, evaluation and ASGI/HTTP smoke output under `reports/quality/<UTC>/`. The current Starlette version emits a TestClient deprecation warning; the recorded tests pass.
 
-For a short demo: search `salon chair`; compare ItemCF for the first two anonymous users; select an unknown user to see Popularity fallback; open Evaluation and inspect the paired algorithm results.
+For a short demo: search `salon chair`; compare ItemCF and Adaptive for an anonymous
+user and inspect the request's actual quota; select an unknown user to see Popularity
+fallback; open Evaluation for algorithm results and Traffic Lab for history/frequency
+slices and the seeded offline policy comparison.
 
 ## Sources
 

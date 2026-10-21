@@ -10,7 +10,10 @@ from joysearch.recommendation.pipeline import RecPipeline
 
 def evaluate(source, artifact, algorithms=("popularity", "itemcf"), split="test"):
     started = time.perf_counter()
-    model = RecPipeline.load(artifact, enable_two_tower="two_tower" in algorithms)
+    model = RecPipeline.load(
+        artifact,
+        enable_two_tower=bool(set(algorithms) & {"two_tower", "rrf", "quota", "adaptive_quota"}),
+    )
     manifest = read_json(source / "manifest.json")
     if model.manifest["data_manifest"]["split_sha256"] != manifest["split_sha256"]:
         raise ValueError("Recommendation model/data split mismatch; rebuild model")
@@ -59,6 +62,8 @@ def evaluate(source, artifact, algorithms=("popularity", "itemcf"), split="test"
                     "ndcg_at_10": gain,
                     "unavailable_target": int(event.parent_asin not in train_items),
                     "fallback_reason": reason,
+                    "latency_ms": times[-1],
+                    "history_length": len(model.popularity.histories[event.user_id]),
                 }
             )
         algorithm_reports[algorithm] = {
@@ -72,6 +77,27 @@ def evaluate(source, artifact, algorithms=("popularity", "itemcf"), split="test"
             "fallback_rate": fallbacks / len(test),
         }
         latency[algorithm] = latency_summary(times)
+    frame = pd.DataFrame(rows)
+    history_slices = []
+    for name, group in frame.groupby("algorithm", sort=False):
+        for label, mask in [
+            ("1-2", group.history_length.le(2)),
+            ("3-5", group.history_length.between(3, 5)),
+            ("6+", group.history_length.gt(5)),
+        ]:
+            subset = group[mask]
+            if not subset.empty:
+                history_slices.append(
+                    {
+                        "algorithm": name,
+                        "history_bucket": label,
+                        "sample_count": len(subset),
+                        "hr_at_10": float(subset.hr_at_10.mean()),
+                        "ndcg_at_10": float(subset.ndcg_at_10.mean()),
+                        "fallback_rate": float(subset.fallback_reason.notna().mean()),
+                        "latency": latency_summary(subset.latency_ms),
+                    }
+                )
     report = {
         "status": "completed",
         "dataset": "amazon_baby_rec",
@@ -89,10 +115,12 @@ def evaluate(source, artifact, algorithms=("popularity", "itemcf"), split="test"
         "unavailable_target_count": unseen,
         "unavailable_target_rate": unseen / len(test),
         "algorithms": algorithm_reports,
+        "history_slices": history_slices,
         "model_version": model.version,
         "config": {
             "baseline": model.manifest,
-            "two_tower": model.two_tower.manifest if "two_tower" in algorithms else None,
+            "two_tower": model.two_tower.manifest if model.two_tower else None,
+            "allocation": model.allocation,
         },
         "duration_seconds": time.perf_counter() - started,
         "limitations": [
@@ -103,4 +131,4 @@ def evaluate(source, artifact, algorithms=("popularity", "itemcf"), split="test"
             "No recommendation metadata; separate from WANDS catalog",
         ],
     }
-    return report, latency, pd.DataFrame(rows)
+    return report, latency, frame

@@ -74,6 +74,26 @@ def smoke(base_url=None):
             assert tower_rankings[0] != tower_rankings[1]
             tower_cold = client.post("/api/v1/recommend", json={"algorithm": "two_tower"}).json()
             assert tower_cold["fallback_reason"] == "cold_user"
+        for algorithm in ["rrf", "quota", "adaptive_quota"]:
+            if algorithm in ready.json()["recommendation_algorithms"]:
+                response = client.post(
+                    "/api/v1/recommend",
+                    json={"user_id": users[0]["user_id"], "algorithm": algorithm, "debug": True},
+                )
+                assert response.status_code == 200, response.text
+                assert len(response.json()["results"]) == 10
+                assert response.json()["allocation"]["budget"] == 100
+                assert (
+                    client.post("/api/v1/recommend", json={"algorithm": algorithm}).json()[
+                        "fallback_reason"
+                    ]
+                    == "cold_user"
+                )
+        allocation_report = client.get("/api/v1/reports/allocation").json()
+        if "quota" in ready.json()["recommendation_algorithms"]:
+            assert allocation_report["status"] == "completed"
+            assert allocation_report["report"]["sample_count"] == 10000
+            assert len(allocation_report["simulation"]) == 3
         cold = client.post("/api/v1/recommend", json={"user_id": "unknown"}).json()
         assert cold["fallback_reason"] == "cold_user"
         assert (

@@ -61,3 +61,23 @@ python scripts/evaluate.py --pipeline all --search-algorithms bm25 dense hybrid 
 ```
 
 Generated run directories stay under the Git-ignored `reports/` directory. A complete test run updates `reports/latest.json`; validation and single-domain runs preserve that pointer.
+
+## Allocation and cold-start diagnostics
+
+The [allocation protocol](allocation.md) fixes B100/K10, all held-out users, the
+full Amazon training catalog and seen-item exclusion. Validation selects finite
+fixed/request-level policies, then the protocol signature gates test. Source-cache
+verification and per-user baseline parity protect reuse of E1 channel candidates.
+Target-frequency buckets and history-length groups use training information only;
+all unavailable targets remain misses. Coverage uses the full training catalog
+even inside a subgroup. Reports retain signed per-user differences, quota credits,
+tail list share, concentration and native underfill.
+
+Finite-arm UCB experiments use an explicitly named held-out rating-target proxy.
+Each action uses only prior selected-arm feedback. Five seeded permutations retain
+all users; logs permit prefix replay. Mean/sample standard deviation, losses to the
+fixed policy and contextual proxy-oracle regret are diagnostic outputs. They do
+not estimate CTR, business uplift, IPS/DR or real exposure effects. Allocation and
+simulation runs maintain separate pointers and preserve the complete application
+benchmark pointer. Actual serving timings and 1–2/3–5/6+ history-group latency are
+reported by the complete recommendation evaluator.

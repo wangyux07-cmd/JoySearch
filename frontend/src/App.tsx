@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import TrafficLab from "./TrafficLab";
 
 type Result = {
   catalog_id: string;
@@ -16,6 +17,13 @@ type Ranking = {
   results: Result[];
   latency_ms: number;
   fallback_reason?: string | null;
+  allocation?: {
+    policy: string;
+    budget: number;
+    selected_count: number;
+    requested_quotas?: Record<string, number>;
+    reallocated_slots?: number;
+  } | null;
 };
 type User = { user_id: string; history_count: number };
 type Metrics = {
@@ -82,7 +90,9 @@ const labels: Record<string, string> = {
 };
 
 export default function App() {
-  const [tab, setTab] = useState<"search" | "rec" | "metrics">("search");
+  const [tab, setTab] = useState<"search" | "rec" | "metrics" | "traffic">(
+    "search",
+  );
   const [query, setQuery] = useState("salon chair");
   const [users, setUsers] = useState<User[]>([]);
   const [user, setUser] = useState("");
@@ -135,7 +145,14 @@ export default function App() {
         if (
           !Array.isArray(recommendations) ||
           !recommendations.every((a) =>
-            ["popularity", "itemcf", "two_tower"].includes(a),
+            [
+              "popularity",
+              "itemcf",
+              "two_tower",
+              "rrf",
+              "quota",
+              "adaptive_quota",
+            ].includes(a),
           )
         ) {
           throw new Error("后端推荐能力合同不匹配，请重启当前版本 API。");
@@ -203,6 +220,7 @@ export default function App() {
             ["search", "Search · 搜索"],
             ["rec", "For You · 推荐"],
             ["metrics", "Evaluation · 评测"],
+            ["traffic", "Traffic Lab · 配额实验"],
           ] as const
         ).map(([value, name]) => (
           <button
@@ -217,7 +235,9 @@ export default function App() {
         ))}
       </nav>
       <main>
-        {tab !== "metrics" ? (
+        {tab === "traffic" ? (
+          <TrafficLab />
+        ) : tab !== "metrics" ? (
           <>
             <div className="page-heading">
               <div>
@@ -264,7 +284,7 @@ export default function App() {
                           ["dense", "Dense · 语义检索"],
                           ["hybrid", "Hybrid · RRF 融合"],
                           ["ltr", "LambdaMART · 学习排序"],
-                            ["query_hybrid", "Query Hybrid · 查询理解"],
+                          ["query_hybrid", "Query Hybrid · 查询理解"],
                         ].map(([value, label]) => (
                           <option
                             key={value}
@@ -320,6 +340,9 @@ export default function App() {
                           ["itemcf", "ItemCF · 历史相似商品"],
                           ["popularity", "Popularity · 训练集热门"],
                           ["two_tower", "Two-Tower · 历史向量召回"],
+                          ["rrf", "RRF · 三路等权融合"],
+                          ["quota", "Quota · 验证集固定配额"],
+                          ["adaptive_quota", "Adaptive · 请求级配额"],
                         ].map(([value, label]) => (
                           <option
                             key={value}
@@ -406,6 +429,23 @@ export default function App() {
                           : "选择用户和算法，然后点击“生成推荐”。"}
                       </p>
                     </div>
+                  )}
+                  {ranking?.allocation && (
+                    <p className="notice">
+                      请求策略 <code>{ranking.allocation.policy}</code> · 候选{" "}
+                      {ranking.allocation.selected_count}/
+                      {ranking.allocation.budget}
+                      {ranking.allocation.requested_quotas && (
+                        <>
+                          {" "}
+                          · 配额{" "}
+                          {Object.entries(ranking.allocation.requested_quotas)
+                            .map(([channel, slots]) => `${channel}=${slots}`)
+                            .join(" / ")}{" "}
+                          · 缺额补齐 {ranking.allocation.reallocated_slots ?? 0}
+                        </>
+                      )}
+                    </p>
                   )}
                   {ranking?.fallback_reason && (
                     <p className="notice">

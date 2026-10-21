@@ -24,11 +24,13 @@ if __name__ == "__main__":
     )
     default_rec = ["popularity", "itemcf"]
     if (ROOT / "artifacts/recommendation_two_tower/manifest.json").exists():
-        default_rec.append("two_tower")
+        default_rec += ["two_tower", "rrf"]
+        if (ROOT / "artifacts/recommendation_fusion/selection.json").exists():
+            default_rec += ["quota", "adaptive_quota"]
     parser.add_argument(
         "--recommendation-algorithms",
         nargs="+",
-        choices=["popularity", "itemcf", "two_tower"],
+        choices=["popularity", "itemcf", "two_tower", "rrf", "quota", "adaptive_quota"],
         default=default_rec,
     )
     if "dense" in default_algorithms:

@@ -21,7 +21,9 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
         )
         rec_path = root / "artifacts/recommendation"
         app.state.rec = (
-            RecPipeline.load(rec_path, enable_two_tower=enable_two_tower) if rec_path.exists() else None
+            RecPipeline.load(rec_path, enable_two_tower=enable_two_tower)
+            if rec_path.exists()
+            else None
         )
         yield
 
@@ -42,7 +44,8 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
                 **states,
                 "search_algorithms": app.state.search.algorithms if app.state.search else [],
                 "recommendation_algorithms": app.state.rec.algorithms if app.state.rec else [],
-                "two_tower_ready": app.state.rec is not None and app.state.rec.two_tower is not None,
+                "two_tower_ready": app.state.rec is not None
+                and app.state.rec.two_tower is not None,
                 "dense_ready": app.state.search is not None and app.state.search.dense is not None,
                 "ltr_ready": app.state.search is not None and app.state.search.ranker is not None,
                 "versions": {
@@ -90,7 +93,8 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
             "model_version": pipeline.versions[request.algorithm],
             "results": results,
             "query_plan": pipeline.query_understanding.parse(request.query).to_dict()
-            if request.debug else None,
+            if request.debug
+            else None,
             "degraded": False,
             "trace_id": uuid4().hex,
             "latency_ms": (perf_counter() - started) * 1000,
@@ -114,7 +118,12 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
         if pipeline is None:
             raise HTTPException(503, "Recommendation model missing; run scripts/build_rec.py")
         if request.algorithm not in pipeline.algorithms:
-            raise HTTPException(503, "two_tower unavailable; run scripts/train_two_tower.py")
+            script = (
+                "evaluate_allocation.py --split validation --cache <E1-validation-run>"
+                if request.algorithm in {"quota", "adaptive_quota"}
+                else "train_two_tower.py"
+            )
+            raise HTTPException(503, f"{request.algorithm} unavailable; run scripts/{script}")
         started = perf_counter()
         user = pipeline.aliases.get(request.user_id)
         candidates, reason = pipeline.recommend(
@@ -133,15 +142,30 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
                     "title": None,
                     "rank": c.rank,
                     "score": c.score,
-                    "sources": [c.source],
+                    "sources": c.evidence.get("sources", [c.source]),
+                    **({"evidence": c.evidence} if request.debug else {}),
                     "metadata": {"availability": "metadata unavailable"},
                 }
                 for c in candidates
             ],
             "degraded": reason is not None,
             "fallback_reason": reason,
+            "allocation": candidates[0].evidence.get("allocation") if candidates else None,
             "trace_id": uuid4().hex,
             "latency_ms": (perf_counter() - started) * 1000,
+        }
+
+    @app.get("/api/v1/reports/allocation")
+    def allocation_report():
+        latest = root / "reports/allocation_test_latest.json"
+        if not latest.exists():
+            return {"status": "not_run", "reason": "Run scripts/evaluate_allocation.py first"}
+        folder = root / "reports" / read_json(latest)["run_id"]
+        return {
+            "status": "completed",
+            "report": read_json(folder / "metrics.json"),
+            "slices": read_json(folder / "slices.json"),
+            "simulation": read_json(folder / "simulation_summary.json"),
         }
 
     @app.get("/api/v1/reports/summary")

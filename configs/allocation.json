@@ -1,0 +1,21 @@
+{
+  "version": "allocation-v1",
+  "budget": 100,
+  "display_k": 10,
+  "rrf_k": 60,
+  "channels": ["popularity", "itemcf_native", "two_tower"],
+  "fixed_quotas": {
+    "popular": [80, 0, 20],
+    "balanced": [60, 10, 30],
+    "collaborative": [40, 20, 40]
+  },
+  "adaptive_rules": {
+    "history_support": {"short_history_max": 2, "native_support_min": 20, "sparse": "popular", "supported": "balanced"},
+    "support_only": {"short_history_max": 0, "native_support_min": 100, "sparse": "popular", "supported": "collaborative"}
+  },
+  "history_bucket_maxima": [2, 5],
+  "tail_frequency_max": 2,
+  "head_frequency_min": 10,
+  "selection": "Full validation NDCG@10, then HR@10, then declaration order; select fixed and adaptive separately",
+  "simulation": {"seeds": [7, 42, 2026, 31415, 2718], "exploration_rate": 0.1, "reward": "held-out positive-rating target hit at rank <=10", "policies": ["fixed", "fixed_exploration", "ucb1"]}
+}

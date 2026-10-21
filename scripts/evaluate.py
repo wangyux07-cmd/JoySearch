@@ -14,7 +14,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--search-split", choices=["validation", "test"], default="test")
     parser.add_argument(
-        "--recommendation-algorithms", nargs="+", choices=["popularity", "itemcf", "two_tower"]
+        "--recommendation-algorithms", nargs="+", choices=["popularity", "itemcf", "two_tower", "rrf", "quota", "adaptive_quota"]
     )
     parser.add_argument("--recommendation-split", choices=["validation", "test"], default="test")
     args = parser.parse_args()

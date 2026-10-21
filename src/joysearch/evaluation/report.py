@@ -138,8 +138,10 @@ def run(
             artifact_directories.append(root / dense_manifest["model_path"])
     if pipeline in ["all", "recommendation"]:
         artifact_directories.append(root / "artifacts/recommendation")
-        if "two_tower" in rec_algorithms:
+        if set(rec_algorithms) & {"two_tower", "rrf", "quota", "adaptive_quota"}:
             artifact_directories.append(root / "artifacts/recommendation_two_tower")
+            if set(rec_algorithms) & {"quota", "adaptive_quota"}:
+                artifact_directories.append(root / "artifacts/recommendation_fusion")
             config["packages"]["torch"] = importlib.metadata.version("torch")
     config["model_artifact_sha256"] = {
         p.relative_to(root).as_posix(): file_hash(p)
