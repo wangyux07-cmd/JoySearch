@@ -31,6 +31,7 @@ if __name__ == "__main__":
         choices=["popularity", "itemcf", "two_tower"],
         default=default_rec,
     )
+    parser.add_argument("--recall-diagnostics", action="store_true")
     args = parser.parse_args()
     folder = ROOT / "reports/quality" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     folder.mkdir(parents=True)
@@ -59,6 +60,15 @@ if __name__ == "__main__":
             "http_smoke",
         ),
     ]
+    if args.recall_diagnostics:
+        commands.insert(
+            3,
+            (
+                [sys.executable, "scripts/evaluate_recall.py", "--split", "test"],
+                ROOT,
+                "recall_diagnostics",
+            ),
+        )
     results = []
     for command, cwd, name in commands:
         started = time.perf_counter()
@@ -84,7 +94,13 @@ if __name__ == "__main__":
         print(json.dumps(row), flush=True)
     write_json(
         folder / "results.json",
-        {"checks": results, "latest_metrics": read_json(ROOT / "reports/latest.json")},
+        {
+            "checks": results,
+            "latest_metrics": read_json(ROOT / "reports/latest.json"),
+            "latest_recall": read_json(ROOT / "reports/recall_latest.json")
+            if args.recall_diagnostics and (ROOT / "reports/recall_latest.json").exists()
+            else None,
+        },
     )
     write_json(
         ROOT / "reports/quality/latest.json",

@@ -80,3 +80,25 @@ class ItemCF:
             ]
             return candidates, "insufficient_neighbors"
         return candidates, None
+
+    def retrieve_native(self, context, k):
+        """Return only positive collaborative scores, without popularity completion."""
+        history = set(self.popularity.histories.get(context.user_id, []))
+        history.update(self.item_map[i] for i in context.recent_item_ids if i in self.item_map)
+        if not history:
+            return []
+        scores = np.asarray(self.similarity[sorted(history)].sum(axis=0)).ravel()
+        if context.exclude_seen:
+            scores[list(history)] = -np.inf
+        matches = np.flatnonzero(scores > 0)
+        order = matches[
+            np.lexsort(
+                (self.popularity.items[matches], -self.popularity.counts[matches], -scores[matches])
+            )[:k]
+        ]
+        return [
+            Candidate(
+                "amazon_baby_rec", str(self.popularity.items[i]), float(scores[i]), "itemcf", rank
+            )
+            for rank, i in enumerate(order, 1)
+        ]

@@ -28,3 +28,13 @@ def judgment_coverage(ranking, qrels, k=10):
 
 def hit_rate(ranking, target, k=10):
     return float(target in ranking[:k])
+
+
+def jaccard(left, right):
+    left, right = set(left), set(right)
+    union = left | right
+    return len(left & right) / len(union) if union else 0.0
+
+
+def conditional_hit_rate(top_k_hits, candidate_hits):
+    return top_k_hits / candidate_hits if candidate_hits else None

@@ -1,0 +1,14 @@
+{
+  "budget": 100,
+  "display_k": 10,
+  "rrf_k": 60,
+  "search_channels": ["bm25", "dense"],
+  "recommendation_channels": ["popularity", "itemcf_native", "two_tower"],
+  "search_raw_depth": "B",
+  "recommendation_raw_depth": "B + number of train-seen items; then exclude seen and retain each channel TopB",
+  "fusion": "Equal-weight RRF over filtered TopB channel ranks; item ID breaks ties",
+  "ablation": "All nonempty channel subsets; refill B from remaining channels by the same RRF rule; report actual count when insufficient",
+  "selection_policy": "One prespecified diagnostic matrix, no validation or test parameter selection",
+  "seed": 42,
+  "trace_batch_requests": 32
+}

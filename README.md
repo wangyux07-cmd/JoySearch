@@ -155,6 +155,37 @@ python scripts/evaluate.py --pipeline search
 python scripts/evaluate.py --pipeline recommendation
 ```
 
+## Recall diagnostics
+
+Candidate-stage diagnostics are available independently of the serving benchmark:
+
+```powershell
+python scripts/evaluate_recall.py --split validation
+python scripts/evaluate_recall.py --split test
+python scripts/verify_release.py --recall-diagnostics
+```
+
+The diagnostic matrix compares every nonempty subset of the two search or three recommendation channels at B=100, preserving final K=10 metrics. Native ItemCF contribution excludes Popularity completion; `itemcf_served` separately preserves the existing fallback baseline. Traces retain channel ranks/scores, deduplicated raw unions, seen filtering, fixed-budget selections and final lists. Raw-union recall is reported separately from fixed-budget gains. Results stay in local `reports/run_e1_*` directories; the diagnostic pointer does not replace the complete application benchmark pointer. See [recall diagnostics](docs/recall_evaluation.md) for stage schemas, denominators and ablation rules.
+
+On the fixed test cohorts, the diagnostic results are:
+
+| Search channel set | CandidateJudgedRecall@100 | NDCG@10 |
+|---|---:|---:|
+| BM25 | 0.373704 | 0.624031 |
+| Dense | 0.368893 | 0.645170 |
+| BM25 + Dense RRF | 0.392750 | 0.687759 |
+
+The untruncated search union averages 159.32 candidates and has judged recall 0.482971. It uses a larger candidate set than the B=100 comparisons.
+
+| Recommendation channel set | CandidateHit@100 | HR@10 | NDCG@10 |
+|---|---:|---:|---:|
+| Popularity | 0.1006 | 0.0163 | 0.007573 |
+| Native ItemCF | 0.0184 | 0.0039 | 0.002125 |
+| Two-Tower | 0.0841 | 0.0119 | 0.005768 |
+| All three, equal-weight RRF | 0.0815 | 0.0158 | 0.007388 |
+
+Removing native ItemCF from the three-channel fusion changes CandidateHit@100 by +0.0117, to 0.0932. Its unique candidates do not translate into a fixed-budget gain in this experiment. Native ItemCF underfills B for 26.36% of users, averaging 85.64 candidates; the separate served baseline retains Popularity completion and reproduces HR@10=0.0046. All 2,023 unavailable test targets remain misses. The complete diagnostic run took 160.60 seconds on CPU and produced 57.10 MB of Parquet traces, without retraining or rebuilding indexes.
+
 ## Architecture
 
 | Module | Responsibility |
