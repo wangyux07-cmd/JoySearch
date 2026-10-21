@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import os
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
@@ -10,14 +11,31 @@ from joysearch.api.schemas import RecRequest, SearchRequest, SearchResponse
 from joysearch.common import ROOT, RecommendationContext, read_json
 from joysearch.recommendation.pipeline import RecPipeline
 from joysearch.search.pipeline import SearchPipeline
+from joysearch.telemetry import RequestTrace, instrument
 
 
-def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: bool = True):
+def create_app(
+    root: Path = ROOT,
+    enable_dense: bool = True,
+    enable_two_tower: bool = True,
+    worker_threads: int | None = None,
+    inference_threads: int | None = None,
+    scan_mode: str = "reference",
+    enable_ltr: bool = True,
+):
+    if scan_mode not in {"reference", "cached_controller"}:
+        raise ValueError(f"Unknown exact scan mode: {scan_mode}")
+
     @asynccontextmanager
     async def lifespan(app):
+        loading = perf_counter()
         search_path = root / "artifacts/search"
         app.state.search = (
-            SearchPipeline.load(root, enable_dense=enable_dense) if search_path.exists() else None
+            SearchPipeline.load(
+                root, enable_dense=enable_dense, enable_ltr=enable_ltr and scan_mode == "reference"
+            )
+            if search_path.exists()
+            else None
         )
         rec_path = root / "artifacts/recommendation"
         app.state.rec = (
@@ -25,7 +43,34 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
             if rec_path.exists()
             else None
         )
-        yield
+        if scan_mode == "cached_controller" and app.state.search and app.state.search.dense:
+            from joysearch.search.exact_scan import CachedControllerDenseIndex
+
+            app.state.search.dense = CachedControllerDenseIndex(app.state.search.dense)
+        instrument(app.state.search, app.state.rec)
+        if worker_threads is not None:
+            import anyio.to_thread
+
+            anyio.to_thread.current_default_thread_limiter().total_tokens = worker_threads
+        if inference_threads is not None:
+            import torch
+            from threadpoolctl import threadpool_limits
+
+            torch.set_num_threads(inference_threads)
+            limits = threadpool_limits(limits=inference_threads)
+        else:
+            limits = nullcontext()
+        app.state.runtime = {
+            "pid": os.getpid(),
+            "load_seconds": perf_counter() - loading,
+            "worker_threads": worker_threads,
+            "inference_threads": inference_threads,
+            "response_cache": "off",
+            "scan_mode": scan_mode,
+            "stage_timings": "debug requests only",
+        }
+        with limits:
+            yield
 
     app = FastAPI(title="JoySearch", lifespan=lifespan)
 
@@ -42,6 +87,7 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
         return JSONResponse(
             {
                 **states,
+                "runtime": app.state.runtime,
                 "search_algorithms": app.state.search.algorithms if app.state.search else [],
                 "recommendation_algorithms": app.state.rec.algorithms if app.state.rec else [],
                 "two_tower_ready": app.state.rec is not None
@@ -71,7 +117,8 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
             script = "train_ranker.py" if request.algorithm == "ltr" else "build_dense.py"
             raise HTTPException(503, f"{request.algorithm} unavailable; run scripts/{script}")
         started = perf_counter()
-        candidates = pipeline.search(request.query, request.top_k, request.algorithm)
+        with RequestTrace(request.debug) as trace:
+            candidates = pipeline.search(request.query, request.top_k, request.algorithm)
         results = []
         for c in candidates:
             metadata = pipeline.metadata[c.item_id]
@@ -96,6 +143,7 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
             if request.debug
             else None,
             "degraded": False,
+            "timings": trace.spans if request.debug else None,
             "trace_id": uuid4().hex,
             "latency_ms": (perf_counter() - started) * 1000,
         }
@@ -126,11 +174,12 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
             raise HTTPException(503, f"{request.algorithm} unavailable; run scripts/{script}")
         started = perf_counter()
         user = pipeline.aliases.get(request.user_id)
-        candidates, reason = pipeline.recommend(
-            RecommendationContext(user, exclude_seen=request.exclude_seen),
-            request.top_k,
-            request.algorithm,
-        )
+        with RequestTrace(request.debug) as trace:
+            candidates, reason = pipeline.recommend(
+                RecommendationContext(user, exclude_seen=request.exclude_seen),
+                request.top_k,
+                request.algorithm,
+            )
         return {
             "catalog_id": request.catalog_id,
             "algorithm": request.algorithm,
@@ -149,6 +198,7 @@ def create_app(root: Path = ROOT, enable_dense: bool = True, enable_two_tower: b
                 for c in candidates
             ],
             "degraded": reason is not None,
+            **({"timings": trace.spans} if request.debug else {}),
             "fallback_reason": reason,
             "allocation": candidates[0].evidence.get("allocation") if candidates else None,
             "trace_id": uuid4().hex,

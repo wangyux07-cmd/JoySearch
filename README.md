@@ -9,6 +9,8 @@ Product search and personalised recommendations with FastAPI, React and reproduc
 - **Evaluation:** fixed held-out splits, algorithm comparisons, latency measurements and versioned reports.
 
 See the [local LLM workflow](docs/local_llm.md) for its bounded offline protocol.
+The [serving benchmark](docs/serving_performance.md) measures request stages,
+exact-scan equivalence and HTTP concurrency with a fixed worker budget.
 
 ## Run locally
 

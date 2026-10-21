@@ -51,3 +51,4 @@ class SearchResponse(BaseModel):
     trace_id: str
     latency_ms: float
     query_plan: dict | None = None
+    timings: list[dict] | None = None

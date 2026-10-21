@@ -1,0 +1,17 @@
+{
+  "version": "serving-benchmark-v1",
+  "seed": 42,
+  "unique_requests_per_workload": 96,
+  "requests_per_cell": 384,
+  "repeats": 2,
+  "concurrency": [1, 2, 4, 8],
+  "worker_threads": 4,
+  "inference_threads": 1,
+  "warmup_requests": 12,
+  "timeout_seconds": 10,
+  "run_budget_seconds": 900,
+  "p99_min_samples": 1000,
+  "response_cache": "off",
+  "workloads": {"search": "hybrid", "recommendation": "adaptive_quota"},
+  "protocol": "Closed-loop load; fixed cohorts; sequential cells; same four server-worker budget and one intra-op/BLAS thread; request concurrency varies; no business labels in load generation"
+}
